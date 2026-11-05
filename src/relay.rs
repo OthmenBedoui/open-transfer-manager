@@ -5,9 +5,9 @@
 //! lets the local file wait; a slow source only makes the uploads wait. A journal records the
 //! parts that were accepted, so a stopped relay continues without sending them again. The object
 //! becomes visible only at the very end, once the whole file arrived and every part was accepted.
+use crate::destination::{Destination, SendError};
 use crate::engine::{download, Error, Options, Report, Watch};
 use crate::ranges::RangeSet;
-use crate::s3::{part_size_for, Client, S3Error};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -81,8 +81,7 @@ struct UploadJournal {
     size: u64,
     etag: String,
     modified: String,
-    bucket: String,
-    key: String,
+    target: String,
     upload_id: String,
     part_size: u64,
     downloaded: bool,
@@ -92,8 +91,8 @@ struct UploadJournal {
 impl UploadJournal {
     fn to_text(&self) -> String {
         let mut t = format!(
-            "otm-upload 1\nsize {}\netag {}\nmodified {}\nbucket {}\nkey {}\nupload {}\npart-size {}\ndownloaded {}\n",
-            self.size, self.etag, self.modified, self.bucket, self.key, self.upload_id, self.part_size, self.downloaded
+            "otm-upload 1\nsize {}\netag {}\nmodified {}\ntarget {}\nupload {}\npart-size {}\ndownloaded {}\n",
+            self.size, self.etag, self.modified, self.target, self.upload_id, self.part_size, self.downloaded
         );
         for (n, tag) in &self.parts {
             t.push_str(&format!("part {} {}\n", n, tag));
@@ -112,12 +111,11 @@ impl UploadJournal {
         let size = field("size")?.parse().ok()?;
         let etag = field("etag")?;
         let modified = field("modified")?;
-        let bucket = field("bucket")?;
-        let key = field("key")?;
+        let target = field("target")?;
         let upload_id = field("upload")?;
         let part_size = field("part-size")?.parse().ok()?;
         let downloaded = field("downloaded")? == "true";
-        let mut j = UploadJournal { size, etag, modified, bucket, key, upload_id, part_size, downloaded, parts: vec![] };
+        let mut j = UploadJournal { size, etag, modified, target, upload_id, part_size, downloaded, parts: vec![] };
         for line in lines {
             if line == "end" {
                 return Some(j);
@@ -152,7 +150,7 @@ fn read_part(work: &Path, start: u64, len: usize) -> std::io::Result<Vec<u8>> {
 struct Done {
     upload_round: u32,
     number: u32,
-    result: Result<String, S3Error>,
+    result: Result<String, SendError>,
 }
 
 fn pause(stop: &AtomicBool, wait: Duration) {
@@ -162,11 +160,34 @@ fn pause(stop: &AtomicBool, wait: Duration) {
     }
 }
 
-/// Sends `url` to `bucket/key`, using `work` as the local file while it passes through.
-pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &str, opts: &RelayOptions, stop: Arc<AtomicBool>) -> Result<RelayReport, RelayError> {
+/// Sends `url` to `dest`, using `work` as the local file while it passes through.
+pub fn relay(url: &str, work: &Path, dest: Arc<dyn Destination>, opts: &RelayOptions, stop: Arc<AtomicBool>) -> Result<RelayReport, RelayError> {
+    run(Source::Url(url), work, dest, opts, stop)
+}
+
+/// Sends a file already on this computer. The file stays where it is.
+pub fn put(file: &Path, dest: Arc<dyn Destination>, opts: &RelayOptions, stop: Arc<AtomicBool>) -> Result<RelayReport, RelayError> {
+    let opts = RelayOptions { keep_local: true, ..opts.clone() };
+    run(Source::Local, file, dest, &opts, stop)
+}
+
+enum Source<'a> {
+    Url(&'a str),
+    Local,
+}
+
+/// What identifies this version of a local file: a resume must not mix it with another.
+fn local_version(file: &Path) -> Result<(u64, String), RelayError> {
+    let m = fs::metadata(file).map_err(|e| RelayError::Download(format!("cannot read {}: {}", file.display(), e)))?;
+    let when = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
+    Ok((m.len(), format!("local-{}", when)))
+}
+
+fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOptions, stop: Arc<AtomicBool>) -> Result<RelayReport, RelayError> {
     let began = Instant::now();
     let journal_file = journal_path(work);
-    let saved = fs::read_to_string(&journal_file).ok().and_then(|t| UploadJournal::parse(&t)).filter(|j| j.bucket == bucket && j.key == key);
+    let target = client.describe();
+    let saved = fs::read_to_string(&journal_file).ok().and_then(|t| UploadJournal::parse(&t)).filter(|j| j.target == target && client.still_valid(&j.upload_id));
 
     let watch = Arc::new(Watch::default());
     let mut dl_opts = opts.download.clone();
@@ -175,11 +196,16 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
     // A file fully received in an earlier run needs no download: its journal says which version it is.
     let already_here = saved.as_ref().map(|j| j.downloaded && fs::metadata(work).map(|m| m.len() == j.size).unwrap_or(false)).unwrap_or(false);
     let (result_tx, result_rx) = channel();
-    if already_here {
+    if let Source::Local = source {
+        let (size, version) = local_version(work)?;
+        watch.begin(size, "", &version, &RangeSet::from_items(&[(0, size)]));
+        let _ = result_tx.send(Ok(Report { size, ..Report::default() }));
+    } else if already_here {
         let j = saved.as_ref().unwrap();
         watch.begin(j.size, &j.etag, &j.modified, &RangeSet::from_items(&[(0, j.size)]));
         let _ = result_tx.send(Ok(Report { size: j.size, ..Report::default() }));
     } else {
+        let Source::Url(url) = source else { unreachable!() };
         let (u, w, o, s) = (url.to_string(), work.to_path_buf(), dl_opts, stop.clone());
         std::thread::spawn(move || {
             let _ = result_tx.send(download(&u, &w, &o, s));
@@ -235,24 +261,24 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                 tries.clear();
                 wait_until.clear();
                 accepted.clear();
-                let usable = journal.as_ref().filter(|j| j.size == view.size && j.etag == view.etag && j.modified == view.modified && (!j.etag.is_empty() || !j.modified.is_empty()) && j.part_size == part_size_for(view.size));
+                let usable = journal.as_ref().filter(|j| j.size == view.size && j.etag == view.etag && j.modified == view.modified && (!j.etag.is_empty() || !j.modified.is_empty()) && j.part_size == client.part_size(view.size));
                 if let (true, Some(j)) = (first, usable) {
                     report.parts_resumed = j.parts.len() as u32;
                     accepted.extend(j.parts.iter().cloned());
                 } else {
                     if let Some(old) = journal.take() {
                         // Parts of another version must never end up in the object.
-                        let _ = client.abort(&old.bucket, &old.key, &old.upload_id);
+                        client.cancel(&old.upload_id);
                         if !first {
                             report.uploads_restarted += 1;
                         }
                     }
                     if view.size > 0 {
                         let id = loop {
-                            match client.create_multipart(bucket, key) {
+                            match client.start(view.size) {
                                 Ok(id) => break id,
-                                Err(S3Error::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
-                                Err(S3Error::Retry(m, wait)) => {
+                                Err(SendError::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
+                                Err(SendError::Retry(m, wait)) => {
                                     let t = tries.entry(0).or_insert(0);
                                     *t += 1;
                                     if *t > MAX_PART_TRIES {
@@ -271,10 +297,9 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                             size: view.size,
                             etag: view.etag.clone(),
                             modified: view.modified.clone(),
-                            bucket: bucket.to_string(),
-                            key: key.to_string(),
+                            target: target.clone(),
                             upload_id: id,
-                            part_size: part_size_for(view.size),
+                            part_size: client.part_size(view.size),
                             downloaded: false,
                             parts: vec![],
                         };
@@ -303,8 +328,8 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                         let _ = j.save(&journal_file);
                     }
                 }
-                Err(S3Error::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
-                Err(S3Error::Retry(m, wait)) => {
+                Err(SendError::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
+                Err(SendError::Retry(m, wait)) => {
                     report.part_retries += 1;
                     if wait.is_some() {
                         report.throttled += 1;
@@ -345,12 +370,12 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                         continue;
                     }
                     in_flight.insert(number, Instant::now());
-                    let (c, b, k, id) = (client.clone(), bucket.to_string(), key.to_string(), j.upload_id.clone());
+                    let (c, id) = (client.clone(), j.upload_id.clone());
                     let (w, tx, round) = (work.to_path_buf(), done_tx.clone(), upload_round);
                     std::thread::spawn(move || {
                         let result = match read_part(&w, start, (end - start) as usize) {
-                            Ok(data) => c.upload_part(&b, &k, &id, number, &data),
-                            Err(e) => Err(S3Error::Retry(e.to_string(), None)),
+                            Ok(data) => c.send_part(&id, number, start, &data),
+                            Err(e) => Err(SendError::Retry(e.to_string(), None)),
                         };
                         let _ = tx.send(Done { upload_round: round, number, result });
                     });
@@ -363,10 +388,10 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                 parts.sort_by_key(|p| p.0);
                 let mut attempt = 0;
                 loop {
-                    match client.complete(bucket, key, &j.upload_id, &parts) {
+                    match client.finish(&j.upload_id, &parts, view.size) {
                         Ok(()) => break,
-                        Err(S3Error::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
-                        Err(S3Error::Retry(m, wait)) => {
+                        Err(SendError::Fatal(m)) => return fail(&stop, RelayError::Upload(m)),
+                        Err(SendError::Retry(m, wait)) => {
                             attempt += 1;
                             if attempt >= MAX_PART_TRIES {
                                 return fail(&stop, RelayError::Upload(m));
@@ -375,14 +400,14 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
                         }
                     }
                 }
-                return finish(&client, bucket, key, work, view.size, &journal_file, opts, report, download_report, began);
+                return finish(client.as_ref(), work, view.size, &journal_file, opts, report, download_report, began);
             }
         }
         // An empty file has no parts to send.
         if let (Some(view), true, None) = (&snapshot, download_report.is_some(), &journal) {
             if view.size == 0 {
-                client.put_object(bucket, key, b"").map_err(|e| RelayError::Upload(e.to_string()))?;
-                return finish(&client, bucket, key, work, 0, &journal_file, opts, report, download_report, began);
+                client.store_empty().map_err(|e| RelayError::Upload(e.to_string()))?;
+                return finish(client.as_ref(), work, 0, &journal_file, opts, report, download_report, began);
             }
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -390,10 +415,9 @@ pub fn relay(url: &str, work: &Path, client: Arc<Client>, bucket: &str, key: &st
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish(client: &Client, bucket: &str, key: &str, work: &Path, size: u64, journal_file: &Path, opts: &RelayOptions, mut report: RelayReport, download_report: Option<Report>, began: Instant) -> Result<RelayReport, RelayError> {
-    // What the storage now holds, checked rather than assumed. Each part's data was already
-    // checked by the storage against the SHA-256 in its signed request.
-    let stored = client.head_size(bucket, key).map_err(|e| RelayError::Upload(format!("cannot check the stored file: {}", e)))?;
+fn finish(client: &dyn Destination, work: &Path, size: u64, journal_file: &Path, opts: &RelayOptions, mut report: RelayReport, download_report: Option<Report>, began: Instant) -> Result<RelayReport, RelayError> {
+    // What the destination now holds, checked rather than assumed.
+    let stored = client.stored_size().map_err(|e| RelayError::Upload(format!("cannot check the stored file: {}", e)))?;
     if stored != size {
         return Err(RelayError::Upload(format!("the storage holds {} bytes instead of {}", stored, size)));
     }
@@ -417,8 +441,7 @@ mod tests {
             size: 100,
             etag: "\"a b\"".into(),
             modified: "Mon, 01 Jan".into(),
-            bucket: "b".into(),
-            key: "dir/my file.mp4".into(),
+            target: "s3://b/dir/my file.mp4".into(),
             upload_id: "id1".into(),
             part_size: 10,
             downloaded: true,

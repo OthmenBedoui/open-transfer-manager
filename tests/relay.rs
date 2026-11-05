@@ -35,6 +35,10 @@ fn client(s3: &FakeS3) -> Arc<Client> {
     )
 }
 
+fn dest(s3: &FakeS3) -> Arc<dyn otm_core::destination::Destination> {
+    Arc::new(otm_core::destination::S3Destination::new(client(s3), "bucket", "dir/my file.bin"))
+}
+
 fn no_stop() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
 }
@@ -52,7 +56,7 @@ fn run(source: Scenario, faults: Faults, name: &str) -> (RelayReport, FakeS3) {
     let s3 = fake_s3::start(faults);
     let dir = workdir(name);
     let url = format!("http://127.0.0.1:{}/file", src.port);
-    let r = relay(&url, &dir.join("out.bin"), client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), no_stop()).unwrap_or_else(|e| panic!("{}: {}", name, e));
+    let r = relay(&url, &dir.join("out.bin"), dest(&s3), &RelayOptions::default(), no_stop()).unwrap_or_else(|e| panic!("{}: {}", name, e));
     stored_whole(&s3, size);
     assert_eq!(r.stored_size, size);
     let left: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
@@ -154,7 +158,7 @@ fn a_stopped_relay_continues_without_sending_parts_again() {
         std::thread::sleep(Duration::from_secs(4));
         st2.store(true, Ordering::SeqCst);
     });
-    let first = relay(&url, &work, client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), stop);
+    let first = relay(&url, &work, dest(&s3), &RelayOptions::default(), stop);
     assert!(matches!(first, Err(RelayError::Stopped)), "{:?}", first);
     // In-flight parts may land just after the stop: only count what can no longer change.
     std::thread::sleep(Duration::from_millis(1500));
@@ -162,7 +166,7 @@ fn a_stopped_relay_continues_without_sending_parts_again() {
     assert!(accepted_before > 0, "nothing was sent before the stop");
     assert_eq!(s3.counters.aborted.load(Ordering::SeqCst), 0, "stopping must keep the upload");
 
-    let r = relay(&url, &work, client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), no_stop()).unwrap();
+    let r = relay(&url, &work, dest(&s3), &RelayOptions::default(), no_stop()).unwrap();
     stored_whole(&s3, size);
     assert!(r.parts_resumed > 0, "{:?}", r);
     assert_eq!(s3.counters.created.load(Ordering::SeqCst), 1, "the same upload should have continued");
@@ -184,11 +188,11 @@ fn a_finished_download_is_not_fetched_again_on_resume() {
         std::thread::sleep(Duration::from_secs(3));
         st2.store(true, Ordering::SeqCst);
     });
-    let first = relay(&url, &work, client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), stop);
+    let first = relay(&url, &work, dest(&s3), &RelayOptions::default(), stop);
     assert!(matches!(first, Err(RelayError::Stopped)), "{:?}", first);
     assert!(work.exists(), "the download should have finished before the stop");
     let sent = src.metrics.bytes_sent.load(Ordering::SeqCst);
-    let r = relay(&url, &work, client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), no_stop()).unwrap();
+    let r = relay(&url, &work, dest(&s3), &RelayOptions::default(), no_stop()).unwrap();
     stored_whole(&s3, size);
     assert_eq!(src.metrics.bytes_sent.load(Ordering::SeqCst), sent, "the file was fetched again");
     assert!(r.stored_size == size);
@@ -204,7 +208,7 @@ fn a_local_copy_is_kept_only_when_asked() {
     let work = dir.join("out.bin");
     let url = format!("http://127.0.0.1:{}/file", src.port);
     let opts = RelayOptions { keep_local: true, ..RelayOptions::default() };
-    relay(&url, &work, client(&s3), "bucket", "dir/my file.bin", &opts, no_stop()).unwrap();
+    relay(&url, &work, dest(&s3), &opts, no_stop()).unwrap();
     assert_eq!(fs::metadata(&work).unwrap().len(), size);
     let _ = fs::remove_dir_all(&dir);
 }
@@ -215,7 +219,7 @@ fn a_refusal_from_the_source_stops_everything() {
     let dir = workdir("refused");
     let free = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{}/file", free);
-    let r = relay(&url, &dir.join("out.bin"), client(&s3), "bucket", "dir/my file.bin", &RelayOptions::default(), no_stop());
+    let r = relay(&url, &dir.join("out.bin"), dest(&s3), &RelayOptions::default(), no_stop());
     assert!(matches!(r, Err(RelayError::Download(_))), "{:?}", r);
     assert!(s3.store.lock().unwrap().objects.is_empty());
     let _ = fs::remove_dir_all(&dir);

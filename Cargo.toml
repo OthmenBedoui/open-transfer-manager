@@ -23,3 +23,7 @@ native-tls = "0.2"
 url = "2"
 sha2 = "0.10"
 hmac = "0.12"
+russh = { version = "0.65.1", default-features = false, features = ["ring"] }
+russh-sftp = "3.0.1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util", "process"] }
+rand = "0.10.3"

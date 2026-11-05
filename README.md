@@ -2,12 +2,13 @@
 
 A light, open source transfer manager: download and upload, with resume and verification. The command is `otm`.
 
-**Status: early prototype.** Nothing here is ready for everyday use yet. It has only run against simulated local servers, never against real storage. See [BENCHMARK.md](BENCHMARK.md).
+**Status: early prototype.** Nothing here is ready for everyday use yet. See [What has been tested](#what-has-been-tested) and [BENCHMARK.md](BENCHMARK.md).
 
 ## What works today
 
 - **`otm get`:** downloads a file over several HTTP connections.
-- **`otm relay`:** sends a file to S3-compatible storage while it is still arriving. See [The relay](#the-relay).
+- **`otm relay`:** sends a file to S3-compatible storage or an SFTP server while it is still arriving. See [The relay](#the-relay).
+- **`otm put`:** sends a file already on your computer, with the same resume and checks.
 - **One file on disk:** each piece goes straight to its place, and a journal lists what is safely written. A stopped download continues from there.
 - **Pieces sized by time:** a request should last about 3 seconds at the measured speed. A new connection can take over the second half of the biggest piece left.
 - **Automatic connection count:** it grows while total speed really grows, and falls when the server asks to slow down (`429`, `503`, `Retry-After`).
@@ -22,21 +23,48 @@ A part goes up as soon as it is complete on disk, in whatever order parts comple
 - **Resume:** a journal records the parts the storage accepted. A stopped relay continues without sending them again, and without fetching a file that had already arrived.
 - **No mixed versions:** if the source file changes, the upload is cancelled and starts over.
 - **Nothing half-visible:** the object appears only at the very end, once the whole file arrived and every part was accepted.
-- **Checks:** the storage checks each part against the SHA-256 in its signed request. At the end, `otm` compares the stored size with the expected one. There is no whole-file checksum comparison yet.
+- **Checks:** on S3, the storage checks each part against the SHA-256 in its signed request. On SFTP, which has no standard checksum, each part is read back and compared (turn this off with `--no-verify`). At the end, `otm` compares the stored size with the expected one. There is no whole-file checksum comparison yet.
 
-```bash
-export AWS_ACCESS_KEY_ID=...
-```
+### To S3-compatible storage
 
-```bash
-export AWS_SECRET_ACCESS_KEY=...
-```
+Keys come from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
 ```bash
 otm relay "https://example.com/video.mp4" s3://my-bucket/videos/video.mp4 --endpoint https://s3.eu-west-1.amazonaws.com --region eu-west-1
 ```
 
-**Limits today:** only S3-compatible destinations with path-style addresses; SFTP is not written yet. The tests use a simulated storage server, not a real one: the signature matches the published AWS example, but no real service has answered it. The local file can grow to the full file size when the destination is slow, as there is no limit on it yet.
+### To an SFTP server
+
+```bash
+otm relay "https://example.com/video.mp4" sftp://me@example.org/backup/video.mp4
+```
+
+```bash
+otm put video.mp4 sftp://me@example.org/backup/video.mp4
+```
+
+- **Server identity:** a server that isn't in `~/.ssh/known_hosts` is refused, and the message shows its fingerprint to compare. Then use `--host-key SHA256:...`, or `--accept-new-host-key` to remember it. A changed key is always refused.
+- **Login:** a key file (`--identity`, by default `~/.ssh/id_ed25519`, with its passphrase in `OTM_SFTP_KEY_PASSPHRASE`) or a password in `OTM_SFTP_PASSWORD`. Secrets are never taken on the command line. `ssh-agent` isn't supported yet.
+- **Existing files:** a file already at that name is kept, unless you pass `--overwrite`.
+- **While it runs:** the data goes to `<name>.otmpart` and takes its real name only when complete.
+
+## What has been tested
+
+| Against | What it proves | What it doesn't |
+|---|---|---|
+| Simulated HTTP and S3 servers (`src/lab.rs`, `src/fake_s3.rs`) | Behaviour under cuts, freezes, errors and changing files | That a real S3 service agrees. No real service has answered yet; only the signature is checked, against the published AWS example |
+| A simulated SFTP server, on real SSH (`src/fake_sftp.rs`) | Cuts, damaged data, server keys, logins | How real servers behave under those faults |
+| OpenSSH's real `sftp-server` on a real disk (`tests/openssh_sftp.rs`) | The SFTP side: files, renames, resume and non-Latin names | OpenSSH's `sshd` and other servers: the SSH layer in that test isn't OpenSSH's |
+
+Nothing has run over a real network yet.
+
+## Known limits
+
+- **SFTP speed on distant servers:** pieces are written one small request at a time per connection, so round-trip time probably limits speed. This hasn't been measured over a real network.
+- **All-or-nothing parts:** a part that fails is sent again from its start (8 MB by default).
+- **Disk use:** the local file can reach the full file size when the destination is slow. A relay without `--keep-local` deletes it at the end.
+- **S3:** only path-style addresses.
+- **Not done yet:** the graphical interface, the system credential store, WebDAV, a speed limit and sharing the line between directions.
 
 ## Build and test
 
@@ -44,6 +72,12 @@ You need [Rust](https://www.rust-lang.org/) (edition 2021).
 
 ```bash
 cargo test --release
+```
+
+The test against OpenSSH's `sftp-server` needs that program, which Git for Windows and most Linux OpenSSH packages include:
+
+```bash
+OTM_SFTP_SERVER=/path/to/sftp-server cargo test --release --test openssh_sftp -- --ignored --test-threads=1
 ```
 
 ```bash
@@ -66,14 +100,18 @@ To compare with another engine, add `--old <program>`. It receives `LAB_URL` and
 |---|---|
 | `src/engine.rs` | The download engine |
 | `src/relay.rs` | Receiving and sending at the same time |
+| `src/destination.rs` | The interface every destination implements |
 | `src/s3.rs` | The S3-compatible client |
-| `src/fake_s3.rs` | A simulated storage server for tests |
+| `src/sftp.rs` | The SFTP client |
+| `src/fake_s3.rs`, `src/fake_sftp.rs` | Simulated servers for tests |
 | `src/ranges.rs` | Sets of byte ranges |
 | `src/lab.rs` | The test server and its scenarios |
 | `src/bin/otm.rs` | The command line |
 | `src/bin/otm-lab.rs` | The bench |
 | `tests/scenarios.rs` | End-to-end download tests |
-| `tests/relay.rs` | End-to-end relay tests |
+| `tests/relay.rs` | End-to-end relay tests to S3 |
+| `tests/sftp.rs` | End-to-end tests over SFTP |
+| `tests/openssh_sftp.rs` | The SFTP client against OpenSSH's `sftp-server` |
 
 ## Acceptable use
 
