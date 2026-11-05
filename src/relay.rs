@@ -13,7 +13,7 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -137,7 +137,7 @@ impl UploadJournal {
     }
 }
 
-/// The local file is `<work>.part` until the download ends, then `<work>.
+/// The local file is `<work>.part` until the download ends, then `<work>`.
 fn read_part(work: &Path, start: u64, len: usize) -> std::io::Result<Vec<u8>> {
     let mut f = match File::open(part_file(work)) {
         Ok(f) => f,

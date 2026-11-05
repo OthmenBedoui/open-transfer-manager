@@ -146,6 +146,25 @@ pub fn file_matches(path: &Path, size: u64, version: u64) -> std::io::Result<boo
     Ok(true)
 }
 
+/// Are these bytes exactly the given version of the server's file?
+pub fn bytes_match(data: &[u8], size: u64, version: u64) -> bool {
+    if data.len() as u64 != size {
+        return false;
+    }
+    let tab = table(version);
+    let mut want = vec![0u8; 1 << 20];
+    let mut pos = 0usize;
+    while pos < data.len() {
+        let n = (data.len() - pos).min(want.len());
+        fill(&tab, pos as u64, &mut want[..n]);
+        if data[pos..pos + n] != want[..n] {
+            return false;
+        }
+        pos += n;
+    }
+    true
+}
+
 #[derive(Default)]
 pub struct Metrics {
     pub connections: AtomicU64,

@@ -17,6 +17,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("get") if args.len() == 3 => get(&args[1], Path::new(&args[2])),
         Some("serve") if args.len() == 2 => serve(&args[1]),
+        Some("fake-s3") => fake_s3(),
         Some("bench") => bench(&args[1..]),
         _ => {
             eprintln!("usage: otm-lab get URL FILE | otm-lab serve SCENARIO | otm-lab bench [--old EXE] [--repeat N] [--only NAME] [--work DIR]");
@@ -44,6 +45,14 @@ fn serve(name: &str) {
     println!("PORT={}", server.port);
     let _ = std::io::stdout().flush();
     // Runs until the bench ends it.
+    let _ = std::io::stdin().read(&mut [0u8; 1]);
+}
+
+fn fake_s3() {
+    let server = otm_core::fake_s3::start(otm_core::fake_s3::Faults::default());
+    println!("PORT={}", server.port);
+    let _ = std::io::stdout().flush();
+    // Runs until whoever started it ends it.
     let _ = std::io::stdin().read(&mut [0u8; 1]);
 }
 

@@ -19,6 +19,40 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Lets another part of the program follow what is safely in the local file.
+#[derive(Debug, Default)]
+pub struct Watch {
+    inner: Mutex<Option<WatchView>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WatchView {
+    /// Grows each time the download starts on a different version of the file.
+    pub round: u32,
+    pub size: u64,
+    pub etag: String,
+    pub modified: String,
+    pub done: RangeSet,
+}
+
+impl Watch {
+    pub fn begin(&self, size: u64, etag: &str, modified: &str, done: &RangeSet) {
+        let mut v = self.inner.lock().unwrap();
+        let round = v.as_ref().map(|x| x.round).unwrap_or(0) + 1;
+        *v = Some(WatchView { round, size, etag: etag.to_string(), modified: modified.to_string(), done: done.clone() });
+    }
+
+    fn written(&self, start: u64, end: u64) {
+        if let Some(v) = self.inner.lock().unwrap().as_mut() {
+            v.done.add(start, end);
+        }
+    }
+
+    pub fn snapshot(&self) -> Option<WatchView> {
+        self.inner.lock().unwrap().clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Options {
     pub max_connections: usize,
@@ -37,6 +71,8 @@ pub struct Options {
     pub user_agent: String,
     /// Sends the journal to disk this often.
     pub journal_every: Duration,
+    /// Told about every range written, for whoever follows this download.
+    pub watch: Option<Arc<Watch>>,
 }
 
 impl Default for Options {
@@ -53,6 +89,7 @@ impl Default for Options {
             cookies: String::new(),
             user_agent: "open-transfer-manager/0.1".into(),
             journal_every: Duration::from_secs(1),
+            watch: None,
         }
     }
 }
@@ -547,7 +584,8 @@ fn worker(s: Arc<Session>) {
     s.state.lock().unwrap().workers -= 1;
 }
 
-fn writer_thread(file: File, rx: Receiver<(u64, Vec<u8>)>, session_state: Arc<Mutex<Option<Arc<Session>>>>, journal: PathBuf, meta: (u64, String, String), every: Duration, seed: RangeSet) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn writer_thread(file: File, rx: Receiver<(u64, Vec<u8>)>, session_state: Arc<Mutex<Option<Arc<Session>>>>, journal: PathBuf, meta: (u64, String, String), every: Duration, seed: RangeSet, watch: Option<Arc<Watch>>) -> Result<(), String> {
     let mut done_since_save = false;
     let mut last = Instant::now();
     let mut done = seed;
@@ -559,6 +597,9 @@ fn writer_thread(file: File, rx: Receiver<(u64, Vec<u8>)>, session_state: Arc<Mu
     while let Ok((at, data)) = rx.recv() {
         write_at(&file, &data, at).map_err(|e| format!("cannot write the file: {}", e))?;
         done.add(at, at + data.len() as u64);
+        if let Some(w) = &watch {
+            w.written(at, at + data.len() as u64);
+        }
         done_since_save = true;
         if let Some(s) = session_state.lock().unwrap().as_ref() {
             s.state.lock().unwrap().done = done.clone();
@@ -671,6 +712,9 @@ fn run_ranged(http: Http, url: String, dest: &Path, size: u64, etag: String, mod
     let journal = journal_path(dest);
     let (file, seed) = prepare_part(&part, &journal, size, &etag, &modified)?;
     report.resumed_bytes = seed.len();
+    if let Some(w) = &opts.watch {
+        w.begin(size, &etag, &modified, &seed);
+    }
     let if_range = if !etag.is_empty() {
         Some(etag.clone())
     } else if !modified.is_empty() {
@@ -705,8 +749,8 @@ fn run_ranged(http: Http, url: String, dest: &Path, size: u64, etag: String, mod
         stop: stop.clone(),
     });
     let link = Arc::new(Mutex::new(Some(session.clone())));
-    let (link2, jp, meta, every, seed2) = (link.clone(), journal.clone(), (size, etag, modified), opts.journal_every, seed);
-    let writer = std::thread::spawn(move || writer_thread(file, rx, link2, jp, meta, every, seed2));
+    let (link2, jp, meta, every, seed2, watch) = (link.clone(), journal.clone(), (size, etag, modified), opts.journal_every, seed, opts.watch.clone());
+    let writer = std::thread::spawn(move || writer_thread(file, rx, link2, jp, meta, every, seed2, watch));
 
     let mut climber = Climber::new();
     let mut handles = vec![];
@@ -839,6 +883,9 @@ pub fn download(url: &str, dest: &Path, opts: &Options, stop: Arc<AtomicBool>) -
             Answer::Empty => {
                 File::create(part_path(dest)).map_err(|e| Error::Failed(e.to_string()))?;
                 finish(dest, 0)?;
+                if let Some(w) = &opts.watch {
+                    w.begin(0, "", "", &RangeSet::new());
+                }
                 carried.seconds = began.elapsed().as_secs_f64();
                 return Ok(carried);
             }
@@ -858,6 +905,9 @@ pub fn download(url: &str, dest: &Path, opts: &Options, stop: Arc<AtomicBool>) -
             match run_single(Box::new(resp.into_reader()), expected, dest, &stop) {
                 Ok(size) => {
                     finish(dest, size)?;
+                    if let Some(w) = &opts.watch {
+                        w.begin(size, "", "", &RangeSet::from_items(&[(0, size)]));
+                    }
                     carried.size = size;
                     carried.used_ranges = false;
                     carried.peak_connections = 1;

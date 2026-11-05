@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const MB: u64 = 1 << 20;
-const OBJECT: &str = "/bucket/dir/my file.bin";
 
 fn workdir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("otm_relay_test_{}_{}", std::process::id(), name));
@@ -119,8 +118,10 @@ fn trouble_on_the_source_side_lose_nothing() {
 
 #[test]
 fn a_changed_file_never_mixes_two_versions() {
-    let source = Scenario { change_after: 6 * MB, ..scenario("changed-file", 64 * MB) };
+    // Late enough that some parts of the first version are already on the storage.
+    let source = Scenario { change_after: 40 * MB, ..scenario("changed-file", 160 * MB) };
     let (r, s3) = run(source, Faults::default(), "changed");
+    assert!(s3.counters.parts_accepted.load(Ordering::SeqCst) > r.parts as u64, "no part of the first version was sent: {:?}", r);
     assert_eq!(r.download.restarts, 1, "{:?}", r);
     assert_eq!(r.uploads_restarted, 1, "{:?}", r);
     assert_eq!(s3.counters.aborted.load(Ordering::SeqCst), 1, "the first upload should have been cancelled");
@@ -218,5 +219,4 @@ fn a_refusal_from_the_source_stops_everything() {
     assert!(matches!(r, Err(RelayError::Download(_))), "{:?}", r);
     assert!(s3.store.lock().unwrap().objects.is_empty());
     let _ = fs::remove_dir_all(&dir);
-    let _ = OBJECT;
 }
