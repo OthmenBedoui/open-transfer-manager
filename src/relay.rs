@@ -6,7 +6,7 @@
 //! parts that were accepted, so a stopped relay continues without sending them again. The object
 //! becomes visible only at the very end, once the whole file arrived and every part was accepted.
 use crate::destination::{Destination, SendError};
-use crate::engine::{download, Error, Options, Report, Watch};
+use crate::engine::{download, Error, Options, Progress, Report, Watch};
 use crate::ranges::RangeSet;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -25,11 +25,14 @@ pub struct RelayOptions {
     pub download: Options,
     pub upload_connections: usize,
     pub keep_local: bool,
+    /// Refuse to finish unless the whole file has this SHA-256.
+    pub expected_sha256: Option<String>,
+    pub progress: Option<Arc<Progress>>,
 }
 
 impl Default for RelayOptions {
     fn default() -> Self {
-        RelayOptions { download: Options::default(), upload_connections: 4, keep_local: false }
+        RelayOptions { download: Options::default(), upload_connections: 4, keep_local: false, expected_sha256: None, progress: None }
     }
 }
 
@@ -46,6 +49,10 @@ pub struct RelayReport {
     pub received_at_first_part: Option<u64>,
     pub uploads_restarted: u32,
     pub stored_size: u64,
+    /// Of the local file that was sent.
+    pub sha256: String,
+    /// How the stored copy was checked.
+    pub verified: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -136,6 +143,21 @@ impl UploadJournal {
     }
 }
 
+/// The SHA-256 of a whole file, in lowercase hexadecimal.
+pub fn sha256_of_file(path: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut f = File::open(path)?;
+    let mut hash = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            return Ok(crate::s3::hex(&hash.finalize()));
+        }
+        hash.update(&buf[..n]);
+    }
+}
+
 /// The local file is `<work>.part` until the download ends, then `<work>`.
 fn read_part(work: &Path, start: u64, len: usize) -> std::io::Result<Vec<u8>> {
     let mut f = match File::open(part_file(work)) {
@@ -190,15 +212,20 @@ fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOp
     let target = client.describe();
     let saved = fs::read_to_string(&journal_file).ok().and_then(|t| UploadJournal::parse(&t)).filter(|j| j.target == target && client.still_valid(&j.upload_id));
 
-    let watch = Arc::new(Watch::default());
+    let watch = Arc::new(match &opts.progress {
+        Some(p) => Watch::with_progress(p.clone()),
+        None => Watch::default(),
+    });
     let mut dl_opts = opts.download.clone();
     dl_opts.watch = Some(watch.clone());
 
     // A file fully received in an earlier run needs no download: its journal says which version it is.
     let already_here = saved.as_ref().map(|j| j.downloaded && fs::metadata(work).map(|m| m.len() == j.size).unwrap_or(false)).unwrap_or(false);
     let (result_tx, result_rx) = channel();
+    let mut local_seen = None;
     if let Source::Local = source {
         let (size, version) = local_version(work)?;
+        local_seen = Some((size, version.clone()));
         watch.begin(size, "", &version, &RangeSet::from_items(&[(0, size)]));
         let _ = result_tx.send(Ok(Report { size, ..Report::default() }));
     } else if already_here {
@@ -351,6 +378,11 @@ fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOp
             }
         }
 
+        if let (Some(p), Some(view), Some(j)) = (&opts.progress, &snapshot, &journal) {
+            let whole = accepted.keys().map(|n| ((*n as u64) * j.part_size).min(view.size) - (*n as u64 - 1) * j.part_size).sum();
+            p.set_sent(whole);
+        }
+
         // Parts that are complete on disk and not sent yet.
         if let (Some(view), Some(j)) = (&snapshot, &journal) {
             let parts_total = view.size.div_ceil(j.part_size) as u32;
@@ -386,6 +418,22 @@ fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOp
 
             // Everything arrived and everything was accepted: only now does the object appear.
             if download_report.is_some() && in_flight.is_empty() && accepted.len() as u32 == parts_total {
+                // A local file edited during the send: its parts come from different versions.
+                if local_seen.is_some() && local_seen != local_version(work).ok() {
+                    client.cancel(&j.upload_id);
+                    let _ = fs::remove_file(&journal_file);
+                    return fail(&stop, RelayError::Upload(format!("{} changed while it was being sent. Nothing was stored; send it again.", work.display())));
+                }
+                // The last check before the file appears under its name.
+                report.sha256 = sha256_of_file(work).map_err(|e| RelayError::Upload(format!("cannot read the finished file: {}", e)))?;
+                if let Some(expected) = opts.expected_sha256.as_deref().filter(|e| !e.eq_ignore_ascii_case(&report.sha256)) {
+                    client.cancel(&j.upload_id);
+                    let _ = fs::remove_file(&journal_file);
+                    if !opts.keep_local {
+                        let _ = fs::remove_file(work);
+                    }
+                    return fail(&stop, RelayError::Upload(format!("the file's SHA-256 is {}, not the expected {}. Nothing was stored.", report.sha256, expected)));
+                }
                 let mut parts: Vec<(u32, String)> = accepted.iter().map(|(n, t)| (*n, t.clone())).collect();
                 parts.sort_by_key(|p| p.0);
                 let mut attempt = 0;
@@ -408,6 +456,10 @@ fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOp
         // An empty file has no parts to send.
         if let (Some(view), true, None) = (&snapshot, download_report.is_some(), &journal) {
             if view.size == 0 {
+                report.sha256 = sha256_of_file(work).map_err(|e| RelayError::Upload(e.to_string()))?;
+                if let Some(expected) = opts.expected_sha256.as_deref().filter(|e| !e.eq_ignore_ascii_case(&report.sha256)) {
+                    return fail(&stop, RelayError::Upload(format!("the file's SHA-256 is {}, not the expected {}. Nothing was stored.", report.sha256, expected)));
+                }
                 client.store_empty().map_err(|e| RelayError::Upload(e.to_string()))?;
                 return finish(client.as_ref(), work, 0, &journal_file, opts, report, download_report, began);
             }
@@ -424,6 +476,11 @@ fn finish(client: &dyn Destination, work: &Path, size: u64, journal_file: &Path,
         return Err(RelayError::Upload(format!("the storage holds {} bytes instead of {}", stored, size)));
     }
     report.stored_size = stored;
+    report.verified = client.verification().to_string();
+    if let Some(p) = &opts.progress {
+        p.finish(size);
+        p.set_sent(size);
+    }
     let _ = fs::remove_file(journal_file);
     if !opts.keep_local {
         let _ = fs::remove_file(work);

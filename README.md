@@ -9,6 +9,9 @@ A light, open source transfer manager: download and upload, with resume and veri
 - **`otm get`:** downloads a file over several HTTP connections.
 - **`otm relay`:** sends a file to S3-compatible storage or an SFTP server while it is still arriving. See [The relay](#the-relay).
 - **`otm put`:** sends a file already on your computer, with the same resume and checks.
+- **`otm queue`:** runs a list of transfers, a few at a time, and remembers what is finished. See [Queues](#queues).
+- **SHA-256:** every transfer reports the digest of the whole file, and `--sha256 HEX` refuses a file that doesn't match.
+- **`--json`:** one JSON object per event, for scripts. See [Scripts](#scripts).
 - **One file on disk:** each piece goes straight to its place, and a journal lists what is safely written. A stopped download continues from there.
 - **Pieces sized by time:** a request should last about 3 seconds at the measured speed. A new connection can take over the second half of the biggest piece left.
 - **Automatic connection count:** it grows while total speed really grows, and falls when the server asks to slow down (`429`, `503`, `Retry-After`).
@@ -23,7 +26,7 @@ A part goes up as soon as it is complete on disk, in whatever order parts comple
 - **Resume:** a journal records the parts the storage accepted. A stopped relay continues without sending them again, and without fetching a file that had already arrived.
 - **No mixed versions:** if the source file changes, the upload is cancelled and starts over.
 - **Nothing half-visible:** the object appears only at the very end, once the whole file arrived and every part was accepted.
-- **Checks:** on S3, the storage checks each part against the SHA-256 in its signed request. On SFTP, which has no standard checksum, each part is read back and compared (turn this off with `--no-verify`). At the end, `otm` compares the stored size with the expected one. There is no whole-file checksum comparison yet.
+- **Checks:** on S3, the storage checks each part against the SHA-256 in its signed request. On SFTP, which has no standard checksum, each part is read back and compared (turn this off with `--no-verify`). At the end, `otm` compares the stored size with the expected one. `--sha256` checks the whole local file just before the file appears at the destination. The stored copy itself is not read again as a whole.
 
 ### To S3-compatible storage
 
@@ -48,6 +51,40 @@ otm put video.mp4 sftp://me@example.org/backup/video.mp4
 - **Existing files:** a file already at that name is kept, unless you pass `--overwrite`.
 - **While it runs:** the data goes to `<name>.otmpart` and takes its real name only when complete.
 
+## Queues
+
+A queue file holds one JSON object per line. Blank lines and lines starting with `#` are skipped.
+
+```json
+{"op":"get","url":"https://example.com/a.zip","file":"a.zip"}
+{"op":"relay","url":"https://example.com/b.zip","target":"s3://my-bucket/b.zip"}
+{"op":"put","file":"c.zip","target":"sftp://me@example.org/c.zip","sha256":"..."}
+```
+
+```bash
+otm queue transfers.jsonl --jobs 3
+```
+
+- **Failures stay contained:** one failed transfer doesn't stop the others.
+- **Running it again:** finished transfers are recorded in `transfers.jsonl.state` and skipped, and failed ones are tried again. A local file that changed, or a download that was deleted, counts as new work. `--restart` forgets everything.
+- **Safety:** a queue is refused if two transfers would use the same local file or the same target.
+- **Options:** S3 and SFTP options apply to the whole queue.
+
+## Scripts
+
+With `--json`, standard output holds one JSON object per line:
+
+```json
+{"event":"started","id":0,"transfer":{"op":"get","source":"https://example.com/a.zip","target":"a.zip"}}
+{"event":"progress","id":0,"size":1048576,"received":524288,"sent":0,"received_per_second":262144,"sent_per_second":0}
+{"event":"done","id":0,"transfer":{"op":"get","source":"https://example.com/a.zip","target":"a.zip"},"result":{"size":1048576,"seconds":2.1,"sha256":"...","verified":"local","connections":2,"parts":0,"parts_resumed":0,"resumed_bytes":0,"retries":0,"restarts":0}}
+```
+
+- **Events:** `started`, `progress`, `done`, `failed` (with `error`), and for queues `skipped` and a final `summary`.
+- **`verified`:** `local`, `parts-signed` (S3), `parts-read-back` (SFTP) or `parts-not-checked` (`--no-verify`).
+- **Exit codes:** `0` all done, `1` a transfer failed, `2` wrong usage.
+- **Secrets:** a password inside an address is removed from all output. Tokens in a URL's query, as in signed links, are not removed, so treat these logs with care.
+
 ## What has been tested
 
 | Against | What it proves | What it doesn't |
@@ -56,7 +93,7 @@ otm put video.mp4 sftp://me@example.org/backup/video.mp4
 | A simulated SFTP server, on real SSH (`src/fake_sftp.rs`) | Cuts, damaged data, server keys, logins | How real servers behave under those faults |
 | OpenSSH's real `sftp-server` on a real disk (`tests/openssh_sftp.rs`) | The SFTP side: files, renames, resume and non-Latin names | OpenSSH's `sshd` and other servers: the SSH layer in that test isn't OpenSSH's |
 
-Nothing has run over a real network yet.
+Nothing has run over a real network yet. A GitHub Actions workflow runs the tests on Windows, Linux and macOS; so far they have only been run locally on Windows.
 
 ## Known limits
 

@@ -21,6 +21,8 @@ pub trait Destination: Send + Sync + 'static {
     fn cancel(&self, id: &str);
     fn store_empty(&self) -> Result<(), SendError>;
     fn stored_size(&self) -> Result<u64, SendError>;
+    /// How each part's arrival is checked, for reports.
+    fn verification(&self) -> &'static str;
 }
 
 pub struct S3Destination {
@@ -66,5 +68,9 @@ impl Destination for S3Destination {
 
     fn stored_size(&self) -> Result<u64, SendError> {
         self.client.head_size(&self.bucket, &self.key)
+    }
+
+    fn verification(&self) -> &'static str {
+        "parts-signed"
     }
 }

@@ -9,3 +9,4 @@ pub mod ranges;
 pub mod relay;
 pub mod s3;
 pub mod sftp;
+pub mod transfer;

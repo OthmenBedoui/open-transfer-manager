@@ -14,15 +14,47 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Counters a display can read while a transfer runs.
+#[derive(Debug, Default)]
+pub struct Progress {
+    size: AtomicU64,
+    received: AtomicU64,
+    sent: AtomicU64,
+}
+
+impl Progress {
+    pub fn size(&self) -> u64 {
+        self.size.load(Ordering::Relaxed)
+    }
+    pub fn received(&self) -> u64 {
+        self.received.load(Ordering::Relaxed)
+    }
+    pub fn sent(&self) -> u64 {
+        self.sent.load(Ordering::Relaxed)
+    }
+    pub fn set_received(&self, size: u64, received: u64) {
+        self.size.store(size, Ordering::Relaxed);
+        self.received.store(received, Ordering::Relaxed);
+    }
+    pub fn set_sent(&self, sent: u64) {
+        self.sent.store(sent, Ordering::Relaxed);
+    }
+    /// For a server without ranges, where nothing is known until the end.
+    pub fn finish(&self, size: u64) {
+        self.set_received(size, size);
+    }
+}
 
 /// Lets another part of the program follow what is safely in the local file.
 #[derive(Debug, Default)]
 pub struct Watch {
     inner: Mutex<Option<WatchView>>,
+    progress: Option<Arc<Progress>>,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +68,14 @@ pub struct WatchView {
 }
 
 impl Watch {
+    pub fn with_progress(progress: Arc<Progress>) -> Self {
+        Watch { inner: Mutex::new(None), progress: Some(progress) }
+    }
+
     pub fn begin(&self, size: u64, etag: &str, modified: &str, done: &RangeSet) {
+        if let Some(p) = &self.progress {
+            p.set_received(size, done.len());
+        }
         let mut v = self.inner.lock().unwrap();
         let round = v.as_ref().map(|x| x.round).unwrap_or(0) + 1;
         *v = Some(WatchView { round, size, etag: etag.to_string(), modified: modified.to_string(), done: done.clone() });
@@ -45,6 +84,9 @@ impl Watch {
     fn written(&self, start: u64, end: u64) {
         if let Some(v) = self.inner.lock().unwrap().as_mut() {
             v.done.add(start, end);
+            if let Some(p) = &self.progress {
+                p.set_received(v.size, v.done.len());
+            }
         }
     }
 

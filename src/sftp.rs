@@ -292,6 +292,14 @@ impl Destination for SftpDestination {
             Ok(m.len())
         })
     }
+
+    fn verification(&self) -> &'static str {
+        if self.target.verify {
+            "parts-read-back"
+        } else {
+            "parts-not-checked"
+        }
+    }
 }
 
 #[cfg(test)]
