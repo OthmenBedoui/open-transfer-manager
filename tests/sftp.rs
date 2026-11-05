@@ -262,6 +262,21 @@ fn logins() {
 }
 
 #[test]
+fn an_unreachable_server_is_reported_soon() {
+    let src = lab::start(scenario("fast", MB));
+    let server = fake_sftp::start(Faults::default(), PASSWORD, None);
+    let free = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+    let dir = workdir("unreachable");
+    let url = format!("http://127.0.0.1:{}/file", src.port);
+    let t = Target { port: free, ..target(&server, "/f.bin") };
+    let began = std::time::Instant::now();
+    let r = relay(&url, &dir.join("a"), dest(t), &RelayOptions::default(), no_stop());
+    assert!(matches!(&r, Err(RelayError::Upload(m)) if m.contains("cannot connect")), "{:?}", r);
+    assert!(began.elapsed() < Duration::from_secs(40), "took {:?}", began.elapsed());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_folder_without_permission_is_refused_clearly() {
     let src = lab::start(scenario("fast", MB));
     let server = fake_sftp::start(Faults::default(), PASSWORD, None);

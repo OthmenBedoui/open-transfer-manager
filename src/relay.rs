@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const MAX_PART_TRIES: u32 = 8;
+const MAX_START_TRIES: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct RelayOptions {
@@ -281,7 +282,8 @@ fn run(source: Source, work: &Path, client: Arc<dyn Destination>, opts: &RelayOp
                                 Err(SendError::Retry(m, wait)) => {
                                     let t = tries.entry(0).or_insert(0);
                                     *t += 1;
-                                    if *t > MAX_PART_TRIES {
+                                    // Nothing is running yet: an unreachable destination should say so soon.
+                                    if *t > MAX_START_TRIES {
                                         return fail(&stop, RelayError::Upload(m));
                                     }
                                     let secs = wait.unwrap_or(1u64 << (*t).min(5));
