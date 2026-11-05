@@ -1,0 +1,23 @@
+[package]
+name = "open-transfer-manager"
+version = "0.1.0"
+edition = "2021"
+description = "A light transfer manager: download and upload at the same time, with resume and verification"
+license = "MIT"
+
+[lib]
+name = "otm_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "otm"
+path = "src/bin/otm.rs"
+
+[[bin]]
+name = "otm-lab"
+path = "src/bin/otm-lab.rs"
+
+[dependencies]
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+url = "2"
