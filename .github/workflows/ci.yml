@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            sftp_server: 'C:\Program Files\Git\usr\lib\ssh\sftp-server.exe'
+          - os: ubuntu-latest
+            sftp_server: /usr/lib/openssh/sftp-server
+          - os: macos-latest
+            sftp_server: /usr/libexec/sftp-server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --release
+      - name: Test against OpenSSH's sftp-server
+        run: cargo test --release --test openssh_sftp -- --ignored --test-threads=1
+        env:
+          OTM_SFTP_SERVER: ${{ matrix.sftp_server }}
+      - name: Build
+        run: cargo build --release --bin otm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: otm-${{ matrix.os }}
+          path: |
+            target/release/otm
+            target/release/otm.exe
+          if-no-files-found: error
