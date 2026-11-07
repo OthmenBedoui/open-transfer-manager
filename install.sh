@@ -246,20 +246,27 @@ pkgs=()
 if [ "$FFMPEG" = 1 ] && ! command -v ffmpeg >/dev/null 2>&1; then pkgs+=(ffmpeg); fi
 need_secret=0
 if [ "$OS" = Linux ] && ! command -v secret-tool >/dev/null 2>&1; then need_secret=1; fi
+# The window needs libxkbcommon-x11 (present on desktops, missing on minimal installs).
+need_xkb=0
+if [ "$OS" = Linux ] && command -v ldconfig >/dev/null 2>&1    && ! ldconfig -p 2>/dev/null | grep -q 'libxkbcommon-x11\.so'; then need_xkb=1; fi
 cmd=""
 if [ "$OS" = Darwin ]; then
   if [ "${#pkgs[@]}" -gt 0 ] && command -v brew >/dev/null 2>&1; then cmd="brew install ffmpeg"; fi
 elif command -v apt-get >/dev/null 2>&1; then
   if [ "$need_secret" = 1 ]; then pkgs+=(libsecret-tools); fi
+  if [ "$need_xkb" = 1 ]; then pkgs+=(libxkbcommon-x11-0); fi
   if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo apt-get install -y ${pkgs[*]}"; fi
 elif command -v dnf >/dev/null 2>&1; then
   if [ "${#pkgs[@]}" -gt 0 ]; then pkgs=(ffmpeg-free); fi
   if [ "$need_secret" = 1 ]; then pkgs+=(libsecret); fi
+  if [ "$need_xkb" = 1 ]; then pkgs+=(libxkbcommon-x11); fi
   if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo dnf install -y ${pkgs[*]}"; fi
 elif command -v pacman >/dev/null 2>&1; then
   if [ "$need_secret" = 1 ]; then pkgs+=(libsecret); fi
+  if [ "$need_xkb" = 1 ]; then pkgs+=(libxkbcommon-x11); fi
   if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo pacman -S --needed --noconfirm ${pkgs[*]}"; fi
 elif command -v zypper >/dev/null 2>&1; then
+  if [ "$need_xkb" = 1 ]; then pkgs+=(libxkbcommon-x11-0); fi
   if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo zypper --non-interactive install ${pkgs[*]}"; fi
 fi
 if [ -n "$cmd" ]; then
