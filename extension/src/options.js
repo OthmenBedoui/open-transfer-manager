@@ -12,6 +12,15 @@ async function load() {
     else el.value = s[k];
     el.addEventListener("change", save);
   }
+  const extra = await api.storage.local.get(["videoButton", "hiddenSites"]);
+  $("videoButton").checked = extra.videoButton !== false;
+  $("videoButton").addEventListener("change", (e) => api.storage.local.set({ videoButton: e.target.checked }));
+  const showHidden = (list) => ($("hiddenSites").textContent = list && list.length ? list.join(", ") : "none");
+  showHidden(extra.hiddenSites);
+  $("resetHidden").addEventListener("click", async () => {
+    await api.storage.local.set({ hiddenSites: [] });
+    showHidden([]);
+  });
   testConnection();
   $("test").addEventListener("click", testConnection);
   checkPermissions();

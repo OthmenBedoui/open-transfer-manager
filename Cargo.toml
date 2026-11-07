@@ -1,0 +1,31 @@
+[package]
+name = "otm"
+version = "0.2.4"
+default-run = "otm"
+edition = "2024"
+
+description = "A light, open-source download manager: multi-connection downloads, video and MP3 from 1000+ sites, browser integration."
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+dirs = "7.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["clipboard", "links", "default_fonts", "glow", "wayland", "x11"] }
+egui = { version = "0.37", default-features = false }
+getrandom = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+open = "5.4.5"
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tiny_http = "0.12.0"
+ureq = "3.5.1"
+unicode-bidi = "0.3.18"
+id3 = "1.17.2"

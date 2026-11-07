@@ -1,72 +1,58 @@
-# Browser extensions
+# Intégration navigateur
 
-The extension sends downloads and video pages to the app. It talks to the app through
-**native messaging**: the browser starts a small program (`otm-native-host`) that forwards
-requests to the running app over `127.0.0.1` with a secret token. No open port is reachable
-from web pages or from other computers.
+Le pont natif et l’extension sont deux éléments différents.
 
-```
- extension ──native messaging (stdin/stdout)──▶ otm-native-host ──HTTP + token (127.0.0.1)──▶ app
-                                                  starts the app if needed
-```
+* Le setup copie les extensions à côté de `otm.exe` et enregistre automatiquement
+  `org.opentransfermanager.host` dans HKCU pour Chrome, Edge, Brave et Firefox.
+* Le manifeste du pont pointe directement sur `otm.exe` : pas de fichier BAT ni de console.
+* L’application vérifie les manifestes locaux sans lancer `reg.exe` périodiquement.
+* Les mentions « bridge registered » décrivent le pont, pas une connexion active de l’extension.
 
-## Supported browsers
+## Version locale / développement
 
-| Browser | Build | Bridge location |
-|---|---|---|
-| Chrome, Chromium, Brave, Edge, Vivaldi, Opera, Arc | `chromium` | `NativeMessagingHosts/` in the browser's config folder |
-| Firefox, LibreWolf, Waterfox (incl. Snap & Flatpak paths) | `firefox` | `~/.mozilla/native-messaging-hosts/` (Linux), `~/Library/Application Support/Mozilla/NativeMessagingHosts/` (macOS) |
-| Safari | planned | needs a containing macOS app (see below) |
+Dans l’application : Settings → Browsers → « Installer / configurer Chrome », ou le raccourci du
+menu Démarrer. Le setup propose également ce parcours à sa dernière étape.
+Le bouton « Copier le dossier Chrome » fournit le chemin exact du dossier à charger.
 
-`otm register-browsers` writes the bridge file for every browser it finds. Run it again after installing a new browser.
-`otm doctor` shows which browsers are connected.
+Chrome, Edge et Brave : ouvrir `chrome://extensions`, `edge://extensions` ou
+`brave://extensions`, activer le mode développeur, puis « Charger l’extension non empaquetée »
+et sélectionner le dossier `chromium`. Le manifeste contient une clé publique fixe pour
+stabiliser l’identifiant ; la clé privée reste hors du dépôt.
 
-## What the extension does
+## Setup avec extension publiée sur le Chrome Web Store
 
-* **Capture downloads** (switch in the popup): file types from a list (or all), optional minimum size, excluded sites.
-  If the app cannot take a download, the browser downloads it itself – nothing is lost.
-* **Right-click menus**: *Download with Open Transfer Manager* (links, images, videos), *Download video / audio from this page*.
-* **Popup**: on/off switch, “Download video from this page” with quality, live list with pause/resume/open.
-* Cookies and referrer are passed along so downloads behind a login keep working.
-
-## Build
-
-```bash
-python scripts/build_extension.py
-# dist/extension/chromium/  and  dist/extension/firefox/  (+ zip files for the stores)
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -ChromeWebStoreId IDENTIFIANT_PUBLIC
 ```
 
-### Extension IDs
+L’identifiant doit correspondre à votre extension effectivement publiée (32 lettres a–p).
+Le setup devient alors une installation administrateur dans Program Files. Il écrit
+`HKLM\Software\Wow6432Node\Google\Chrome\Extensions\ID\update_url` avec la valeur officielle
+`https://clients2.google.com/service/update2/crx`, et enregistre le pont natif machine.
+Chrome détecte cette demande à son démarrage ; l’utilisateur confirme l’activation.
+Le désinstalleur retire la demande externe et le pont machine.
 
-The Chromium build has a fixed ID (`iaaaiogfbkpiddhonhfnekdffilohjjc`) thanks to the public `key` in
-`extension/manifest.chromium.json`. Store versions get their own IDs: add them to
-`CHROMIUM_EXTENSION_IDS` in `src/otm/browsers.py` when the extension is published.
-The Firefox ID is `otm@opentransfermanager.org`.
+Sans cet identifiant, le setup reste par utilisateur et propose une installation locale
+guidée ; aucune clé d’installation automatique factice n’est créée. Il n’utilise pas les
+politiques de force-installation ni ne modifie les préférences ou profils Chrome.
 
-## Publishing checklist
+Firefox : ouvrir `about:debugging#/runtime/this-firefox`, charger temporairement le
+`manifest.json` du dossier `firefox`. Cette installation de développement disparaît
+au redémarrage du navigateur. Une installation permanente nécessite un XPI signé.
 
-* **Chrome Web Store** – upload the chromium zip (remove `key` for the store build if asked), justify permissions:
-  `downloads` (capture), `nativeMessaging` (talk to the app), `cookies` + host access (protected downloads),
-  `contextMenus`, `storage`, `activeTab`.
-* **Microsoft Edge Add-ons**, **Opera add-ons** – same zip.
-* **Firefox Add-ons (AMO)** – upload the firefox zip; source code link: this repository.
+## Distribution publique
 
-## Safari (planned)
+Chrome sous Windows impose une distribution via Chrome Web Store hors environnement
+administré. Firefox impose une signature pour les versions publiques usuelles.
+Publier les extensions, vérifier les identifiants dans `src/browsers.rs`, puis proposer
+les liens officiels dans l’application. Aucun lien de store inexistant n’est inventé ici.
+L’activation finale appartient à l’utilisateur dans le navigateur ; le setup ne contourne
+pas les protections en modifiant les profils ou les politiques d’entreprise.
 
-Safari Web Extensions must ship inside a macOS app and use the app as the native bridge:
+Sources officielles :
+- https://developer.chrome.com/docs/extensions/how-to/distribute
+- https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions
+- https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/
 
-1. `xcrun safari-web-extension-converter dist/extension/chromium --app-name "Open Transfer Manager" --bundle-identifier org.opentransfermanager.safari`
-2. In the generated Xcode project, make `SafariWebExtensionHandler.swift` forward messages to the local API
-   (read `runtime.json` from the app data folder, send the request with the `X-OTM-Token` header).
-3. Sign with an Apple Developer ID and notarize.
-
-Contributions welcome – see the roadmap.
-
-## Troubleshooting
-
-| Message | Fix |
-|---|---|
-| *Open Transfer Manager is not installed, or the bridge is not registered* | `otm register-browsers`, then restart the browser |
-| *The bridge does not allow this extension ID* | Update the app; a new extension ID must be listed in `browsers.py` |
-| *App not running* | It starts automatically when you send a download; or open it from the menu |
-| Snap Firefox cannot reach the bridge | Recent Snap Firefox supports native messaging through the desktop portal; update Firefox |
+Le navigateur communique en Native Messaging (stdio encadré), puis le pont contacte
+l’API authentifiée sur 127.0.0.1. Les cookies envoyés au moteur ne sont pas imprimés dans les logs.

@@ -78,6 +78,7 @@ async function sendToApp(url, extra = {}) {
     filename: extra.filename || "",
     user_agent: navigator.userAgent,
     start: true,
+    confirm: true,
   };
   if (extra.media !== undefined) body.media = extra.media;
   if (extra.quality) body.quality = extra.quality;
@@ -145,6 +146,23 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then((d) => sendResponse({ ok: true, data: d }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async answer
+  }
+  if (msg && msg.type === "formats") {
+    // list of formats for the Download button over videos (asks yt-dlp through the app)
+    nativeRequest({ cmd: "formats", url: msg.url })
+      .then((d) => sendResponse({ ok: true, data: d }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg && msg.type === "download-choice") {
+    nativeRequest({ cmd: "add", url: msg.url, media: true, opts: msg.opts, start: true, confirm: true })
+      .then((d) => { updateBadge(); sendResponse({ ok: true, data: d }); })
+      .catch((e) => { updateBadge(e.message); sendResponse({ ok: false, error: e.message }); });
+    return true;
+  }
+  if (msg && msg.type === "show-app") {
+    nativeRequest({ cmd: "show" }).catch(() => {});
+    return false;
   }
   if (msg && msg.type === "clear-error") updateBadge();
   return false;

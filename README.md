@@ -1,107 +1,111 @@
-<div align="center">
-
-<img src="src/otm/assets/otm.png" width="96" alt="Open Transfer Manager logo">
-
 # Open Transfer Manager
 
-**A light, open-source download manager for Linux and macOS.**
-Faster multi-connection downloads, videos from 1000+ sites, and a browser extension that just works.
+Application desktop native en **Rust + egui/eframe**, sans Python, Electron ou WebView.
+Téléchargements HTTP multiconnexions, pause/reprise, files d’attente, planification,
+limiteur global et intégration navigateur. Vidéo/audio via yt-dlp et ffmpeg optionnels.
 
-[![CI](https://github.com/OthmenBedoui/open-transfer-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/OthmenBedoui/open-transfer-manager/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-informational)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+## Windows : compiler et ouvrir le setup
 
-<img src="docs/screenshots/dark.png" width="820" alt="Open Transfer Manager in dark mode">
+Prérequis de développement : Rust stable, un linker Windows (MSVC Build Tools recommandé,
+ou MinGW-w64 pour le toolchain GNU), PowerShell 5.1+ et Inno Setup 6/7.
+Inno Setup peut être installé avec `winget install JRSoftware.InnoSetup`.
 
-</div>
-
-## Install
-
-One command, no root needed for the app itself:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
-The installer checks Python 3.9+ and Tk (and offers to install them), can add **ffmpeg**, installs the app in its own
-folder, adds it to your applications menu (Linux) or `~/Applications` (macOS), and connects your browsers.
+La commande lance les tests, compile en release, prépare les extensions et produit
+`dist/windows/OTM-Setup-0.2.4.exe`, puis ouvre son assistant d’installation.
+Ajouter `-BuildOnly` pour produire le setup sans l’installer, ou `-IsccPath ...` pour
+indiquer le compilateur Inno Setup. Les utilisateurs finaux exécutent seulement le setup :
+ni Rust, ni Python, ni terminal ne sont requis.
 
-<details>
-<summary>Other options</summary>
+Installation par utilisateur, sans droits administrateur : menu Démarrer, raccourci
+bureau optionnel, désinstallation Windows et pont navigateur enregistré automatiquement.
+La désinstallation conserve les téléchargements et préférences de l’utilisateur.
+Un fichier natif `Desinstaller OTM.exe` est présent dans le dossier installé et un
+raccourci de désinstallation est ajouté au menu Démarrer.
+Le même fichier peut être utilisé séparément : il retrouve l’installation dans le
+registre Windows, sans PowerShell, BAT ou fenêtre terminal.
+Le setup local n’est pas signé : une distribution publique nécessite une signature de code.
 
-```bash
-# unattended, with ffmpeg
-curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash -s -- --yes --with-ffmpeg
+## Extensions navigateur
 
-# from a clone
-git clone https://github.com/OthmenBedoui/open-transfer-manager && cd open-transfer-manager && ./install.sh --local .
+Les bundles Chrome/Edge/Brave et Firefox sont inclus dans le setup. **Enregistrer le pont
+n’installe pas l’extension dans un profil navigateur.** Les navigateurs demandent leur
+propre confirmation. Voir [le parcours navigateur](docs/BROWSER_EXTENSIONS.md).
+Il n’y a ni modification forcée des profils ni ajout de politiques d’entreprise.
+La dernière étape du setup ouvre le parcours Chrome et les instructions natives.
+Sans publication Web Store, charger le dossier `extensions/chromium` via le mode développeur.
 
-# with pip / pipx
-pipx install git+https://github.com/OthmenBedoui/open-transfer-manager
+Pour une extension **déjà publiée**, le développeur peut compiler avec
+`-ChromeWebStoreId IDENTIFIANT_PUBLIC`. Ce setup demande les droits administrateur,
+enregistre la demande d’installation Chrome via le registre officiel `update_url`,
+et installe aussi le pont natif au niveau machine. Chrome récupère l’extension à son
+démarrage et demande confirmation d’activation. Aucun identifiant de publication
+inexistant n’est configuré par défaut.
 
-# uninstall (keeps your settings; add --purge to remove them too)
-curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash -s -- --uninstall
-```
-</details>
+## Développement
 
-## Features
-
-| | |
-|---|---|
-| ⚡ **Multi-connection downloads** | Splits files into parts and downloads them in parallel; idle connections take over half of the slowest part. |
-| ⏯️ **Pause & resume** | Even after closing the app or rebooting, when the server supports it. Automatic retries with back-off. |
-| 🎬 **Video & audio from 1000+ sites** | YouTube, TikTok, Instagram, X, Facebook, Vimeo, Twitch, Reddit, SoundCloud… powered by [yt-dlp](https://github.com/yt-dlp/yt-dlp). Pick 4K/1080p/720p or audio only (mp3, m4a, opus, flac). Playlists too. |
-| 🧩 **Browser extension** | Chrome, Brave, Edge, Opera, Vivaldi, Firefox (Safari planned). Captures downloads, adds “Download with OTM” to right-click menus, one-click “Download video from this page”, live progress in the popup. |
-| 🌗 **Light & dark themes** | Follows your system, or choose one. |
-| 🗂️ **Categories** | Video, Music, Images, Documents, Archives, Programs – each saved in its own folder. |
-| 🕒 **Queue & scheduler** | Download N files at a time, start/stop the queue at set hours. |
-| 🐢 **Speed limit** | Globally or per download. |
-| 🪶 **Light** | Python standard library + Tk. The only dependency is yt-dlp. |
-| 🖥️ **Command line & headless** | `otm add URL`, `otm list`, `otm headless` for servers/NAS. |
-| 🔒 **Private** | No telemetry, no account, no ads. The browser bridge only listens on your own computer. |
-
-## Browser extension
-
-1. Install the app (the installer registers the bridge for every browser it finds; run `otm register-browsers` after installing a new browser).
-2. Install the extension:
-   - **Chrome / Brave / Edge / Opera / Vivaldi**: Chrome Web Store *(coming soon)* – or download `open-transfer-manager-chromium-*.zip` from [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases), unzip, open `chrome://extensions`, enable *Developer mode*, *Load unpacked*.
-   - **Firefox**: Firefox Add-ons *(coming soon)* – or load `open-transfer-manager-firefox-*.zip` from `about:debugging`.
-   - **Safari**: planned, see [docs/BROWSER_EXTENSIONS.md](docs/BROWSER_EXTENSIONS.md).
-
-How it works and troubleshooting: [docs/BROWSER_EXTENSIONS.md](docs/BROWSER_EXTENSIONS.md).
-
-## Command line
-
-```text
-otm                         open the app (or bring it to the front)
-otm URL [URL...]            send links to the app
-otm add URL --quality 720   add a video in 720p   (--media / --file / --later)
-otm list                    list downloads
-otm headless                run without a window (controlled by the extension)
-otm doctor                  diagnostics for bug reports
-otm update-ytdlp            update the video engine
-otm register-browsers       connect the browser extension
+```powershell
+cargo run
+cargo test --locked
+cargo clippy --all-targets --locked
+cargo fmt --check
 ```
 
-Keyboard: `Ctrl/Cmd+N` new download · `Ctrl/Cmd+V` paste links · `Space` pause/resume · `Del` remove · `Ctrl/Cmd+F` search.
+Le lancement normal répare/enregistre le pont local si nécessaire ; il ne relance pas
+l’installateur à chaque ouverture. `cargo run -- --setup-browsers` ouvre les réglages navigateur.
+`cargo run -- headless` lance le moteur sans interface. `OTM_DATA_DIR` permet d’isoler
+les données pour les essais. Les commandes CLI sont disponibles avec `cargo run -- --help`.
 
-## FAQ
+Les fonctions vidéo nécessitent yt-dlp ; son installation est proposée dans les réglages.
+ffmpeg est nécessaire pour les conversions MP3 et certains assemblages vidéo.
+Pour un setup hors ligne avec ces outils, passer `-MediaToolsDirectory C:\outils` contenant
+les exécutables et fournir leurs licences conformément à leur distribution. Par défaut,
+ils ne sont pas embarqués afin de garder une installation légère.
 
-**A video site stopped working.** Sites change often. Run `otm update-ytdlp` (or *Settings → Video & audio → Update now*).
+## Organisation
 
-**Best quality is not used / mp3 is not available.** Install `ffmpeg` (the installer offers it).
+| Dossier | Rôle |
+| --- | --- |
+| `src/model.rs`, `src/manager.rs` | Modèle, persistance, file, planification, limiteur |
+| `src/http.rs`, `src/media.rs`, `src/music.rs` | Moteurs HTTP, vidéo/audio et intégration musicale ID3 |
+| `src/ui/` | Interface egui, thème, composants et dialogues |
+| `src/api.rs`, `src/native_host.rs`, `src/browsers.rs` | API locale et pont navigateur |
+| `extension/` | Sources JavaScript/CSS des extensions, pas de page web pour l’application |
+| `installer/`, `scripts/` | Setup Windows et préparation des bundles sans Python |
+| `assets/`, `docs/` | Identité visuelle, licences et documentation |
 
-**The window does not open on Wayland.** Tk needs XWayland, which is on by default in GNOME and KDE.
+Voir [l’architecture](docs/ARCHITECTURE.md) et [la validation Windows](docs/WINDOWS.md).
+Les noms de fichiers arabes disposent d’une police Noto Sans Arabic embarquée et
+d’un affichage bidirectionnel adapté aux chiffres et suffixes latins. Les noms et
+chemins réels restent en Unicode, sans inversion ni translittération. Le champ
+d’édition conserve le texte logique ; un aperçu lisible est fourni pour les noms arabes.
 
-**Where are my settings?** Linux: `~/.local/share/open-transfer-manager` · macOS: `~/Library/Application Support/Open Transfer Manager`.
+Les liens envoyés par le navigateur affichent une confirmation native avant toute
+création de téléchargement : Télécharger, Ajouter à la file ou Annuler. Plusieurs
+demandes sont présentées successivement. Les en-têtes du navigateur sont conservés
+pour le lien d’origine et retirés si l’utilisateur modifie son adresse.
+Les commandes CLI explicites `otm add` et les reprises existantes gardent leur fonctionnement.
 
-## Contributing
+### Enrichissement automatique de High Audio
 
-Bug reports, ideas and pull requests are welcome – see [CONTRIBUTING.md](CONTRIBUTING.md) and the [roadmap](ROADMAP.md).
-Issues labelled [good first issue](https://github.com/OthmenBedoui/open-transfer-manager/labels/good%20first%20issue) are a nice place to start.
+Le MP3 **High (320 kb/s)** recherche automatiquement les paroles avec LRCLIB,
+puis la pochette avec MusicBrainz / Cover Art Archive. Aucun compte ni clé API
+n'est nécessaire. Titre, artiste et durée sont comparés avant d'accepter les paroles.
+L'image de la source sert de repli lorsque la pochette d'album est indisponible.
+Les requêtes utilisent des délais limités et respectent le débit MusicBrainz.
 
-## Legal
+Les tags ID3 `USLT` (paroles) et `APIC` (image) sont intégrés dans une copie vérifiée
+avant remplacement. Une recherche manquante ou une panne de service ne bloque pas
+le MP3 : le résultat de l'enrichissement apparaît dans sa ligne. La couleur dorée
+indique que les deux éléments ont été intégrés. Aucun popup de détection ni format
+Gold distinct. Standard, Small, Original et vidéo ne déclenchent aucune recherche.
+L'enrichissement concerne les morceaux individuels, pas les playlists.
+La conversion 320 kb/s n'améliore pas la qualité de la source.
 
-Open Transfer Manager is a general-purpose tool. Only download content you have the right to download, and respect
-the terms of the sites you use. Released under the [MIT License](LICENSE).
+Services : https://lrclib.net/docs et https://musicbrainz.org/doc/Cover_Art_Archive/API.
+Le titre, l'artiste, la durée et l'album sont envoyés aux services concernés.
+Les versions Python et fichiers historiques ont été sortis de ce dépôt dans une archive
+locale ; l’historique Git reste conservé. Licence MIT ; polices Inter et Noto Sans Arabic sous OFL.

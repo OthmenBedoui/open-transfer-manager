@@ -55,6 +55,14 @@
   <div class="card">
     <h2>Video</h2>
     <div class="line">
+      <div>Show a Download button on videos<div class="hint">Hover a video, click Download, pick a quality or MP3.</div></div>
+      <label class="switch"><input type="checkbox" id="videoButton"><span></span></label>
+    </div>
+    <div class="line">
+      <div>Sites where the button is hidden<div class="hint" id="hiddenSites">none</div></div>
+      <button id="resetHidden">Show everywhere</button>
+    </div>
+    <div class="line">
       <div>Default quality for “Download video”</div>
       <select id="defaultQuality">
         <option value="best">Best available</option>

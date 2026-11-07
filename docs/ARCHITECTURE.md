@@ -1,48 +1,44 @@
 # Architecture
 
-```
-src/otm/
-  cli.py            `otm` command: GUI start, single instance, add/list/headless/doctor...
-  paths.py          per-OS folders, open/reveal files, notifications
-  server.py         local control API (127.0.0.1 + token) used by the bridge and a second `otm` launch
-  native_host.py    native messaging host started by the browser
-  browsers.py       registers the native host with every installed browser
-  core/
-    engine.py       HTTP engine: segments, resume, retries, limiter, queue, scheduler, persistence
-    media.py        yt-dlp downloads (same interface as a plain download)
-    defaults.py     default values
-  ui/
-    app.py          main window
-    dialogs.py      new download, settings, details panel, about, diagnostics
-    theme.py        light/dark palettes applied to ttk
-    widgets.py      icon buttons, sidebar items, segment bar
-    icons.py        vector icons drawn on Canvas
-extension/          browser extension (one source, per-browser manifests)
-install.sh          one-command installer for Linux and macOS
+```text
+egui desktop ───────────────┐
+CLI ───── API loopback ─────┼── Manager ── HTTP workers ── fichiers partiels
+extension ─ native host ───┘           └─ yt-dlp / ffmpeg (optionnels)
 ```
 
-## Threads
+`Manager` partage les téléchargements via `Arc<Mutex<Download>>`. Chaque téléchargement
+possède son thread de coordination ; les segments HTTP utilisent plusieurs connexions.
+Les tâches réseau et les sondes des dialogues ne s’exécutent pas dans la boucle de dessin.
+Les événements demandent un rafraîchissement egui. Le modèle ne dépend pas des widgets.
 
-* **UI thread** – Tk main loop; calls `Manager.tick()` every 500 ms.
-* **Download threads** – one controller per running download, one thread per connection.
-* **API threads** – one per local request. Anything that changes the list goes through `Manager.call()`,
-  which runs it on the tick thread, so the list is only changed from one thread.
+`Settings` et `Download` sont sérialisés en JSON ; les données transitoires ne le sont pas.
+Les fichiers sont sous `%APPDATA%/OpenTransferManager` (ou `OTM_DATA_DIR`). Un identifiant
+de transfert distingue les fichiers partiels de téléchargements homonymes.
 
-## Segmented downloads
+`paths::background_command` masque les consoles des outils Windows. Le Native Messaging
+utilise directement le binaire de l’application et conserve les pipes stdin/stdout.
+L’API est limitée au loopback, exige un jeton (sauf ping) et valide l’en-tête Host.
 
-A download starts with one connection. Once the size is known and the server accepts byte ranges, more connections
-are opened by splitting the largest remaining part in half (never below 256 KB). Parts are written into one
-pre-allocated `.otmpart` file, renamed when complete. Progress (`[start, end, position]` per part) is saved every
-few seconds, so downloads resume after a restart.
+L’interface reste egui/eframe avec backend OpenGL ; aucune page HTML ne constitue l’UI desktop.
+Le presse-papiers natif est activé explicitement dans les fonctionnalités eframe.
 
-## Files
+`ui/text.rs` prépare les séquences bidirectionnelles d’affichage ; HarfRust dans egui
+forme les glyphes arabes avec la police Noto embarquée. Le modèle et les noms réels
+ne passent jamais par cette transformation d’affichage.
 
-| | Linux | macOS |
-|---|---|---|
-| Settings, list | `~/.local/share/open-transfer-manager/` | `~/Library/Application Support/Open Transfer Manager/` |
-| App (installer) | `.../venv/` in the same folder | same |
-| Command | `~/.local/bin/otm` | `~/.local/bin/otm` |
-| Launcher | `~/.local/share/applications/open-transfer-manager.desktop` | `~/Applications/Open Transfer Manager.app` |
+Les requêtes navigateur deviennent des `DownloadRequest` transitoires, portées par
+`Event::ConfirmDownload`. L’API répond `pending_confirmation`, sans créer de `Download`.
+La fenêtre conserve une file de confirmations et ouvre un seul dialogue à la fois.
+Le fichier et son enregistrement sont créés seulement après validation du dialogue.
+Une instance headless refuse les demandes nécessitant une interface ; les appels CLI
+explicites conservent la route d’ajout direct.
 
-`settings.json` and `downloads.json` are written atomically, with a `.bak` copy used if a file is damaged.
-`runtime.json` (mode 600) holds the API port and token while the app runs.
+L’installateur est distinct du lancement quotidien : il prépare les raccourcis,
+la désinstallation, les bundles d’extensions et l’enregistrement du pont. Les caches de
+compilation et paquets générés sont ignorés par Git.
+
+L’option musicale dorée est un choix explicite (`MediaOpts.music_enriched`). Sa présence
+dans les formats exige des données source complètes et ffmpeg. `music.rs` valide la
+pochette, limite sa taille et ses dimensions, puis écrit les métadonnées sur une copie
+du MP3 avant remplacement. Le navigateur traite le clic sur cette option comme une
+confirmation ; les autres demandes passent toujours par le dialogue existant.

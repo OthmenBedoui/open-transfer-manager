@@ -1,35 +1,21 @@
-# Contributing
+# Contribuer
 
-Thanks for helping! Small, focused pull requests are easiest to review.
+Le code de l’application est dans `src/` et l’interface native dans `src/ui/`.
+Conserver la séparation entre modèle, moteur et interface. Les extensions utilisent
+JavaScript/CSS dans `extension/` ; il n’y a pas de runtime Python.
 
-## Set up
+Avant une proposition de changement :
 
-```bash
-git clone https://github.com/OthmenBedoui/open-transfer-manager
-cd open-transfer-manager
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-otm                      # run the app from your checkout
+```text
+cargo fmt --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
 ```
 
-## Checks
+Pour Windows, construire aussi le setup avec `scripts/install-windows.ps1 -BuildOnly`.
+Pour un correctif moteur, privilégier un serveur HTTP local et des fichiers temporaires
+dans les tests. Ne pas utiliser les dossiers personnels ou cookies réels.
+Pour l’interface, vérifier clair/sombre, raccourcis clavier et mise à l’échelle Windows.
 
-```bash
-ruff check src tests scripts
-python -m unittest discover -s tests -v
-python scripts/build_extension.py
-```
-
-The UI test opens real windows; on a headless Linux machine use `xvfb-run python -m unittest discover -s tests`.
-
-## Guidelines
-
-* Keep it light: the app depends only on the Python standard library, Tk and yt-dlp. Discuss new dependencies in an issue first.
-* Python 3.9 compatible code.
-* UI colours come from `ui/theme.py` – never hard-code colours in widgets.
-* Anything that changes the download list from another thread must go through `Manager.call()`.
-* Write user-facing text in plain English.
-
-## Reporting bugs
-
-Please include the output of `otm doctor` and the steps to reproduce.
+Ne jamais ajouter `target/`, `dist/`, données personnelles, cookies ou clés de signature
+au suivi Git. Les sorties de compilation sont régénérées par les scripts.

@@ -1,13 +1,12 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-build/
-dist/
-.ruff_cache/
+/target/
+/dist/
+/work/
 *.otmpart
-# never commit signing keys
 *.pem
 *.key
 *.crx
+*.pfx
+*.log
+secrets/
+.DS_Store
+Thumbs.db

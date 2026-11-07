@@ -75,6 +75,7 @@ function row(d) {
   const li = document.createElement("li");
   if (d.status === "Complete") li.className = "done";
   if (d.status === "Error") li.className = "error";
+  if (d.gold) li.classList.add("gold");
 
   const name = document.createElement("div");
   name.className = "name";
@@ -150,7 +151,9 @@ async function init() {
     $("send-page").disabled = false;
     if (r && r.ok) {
       $("page-result").className = "small success";
-      $("page-result").textContent = `Added: ${r.data.download.name}`;
+      $("page-result").textContent = r.data.pending_confirmation
+        ? "Confirmez le téléchargement dans Open Transfer Manager."
+        : `Added: ${r.data.download.name}`;
     } else {
       $("page-result").className = "small danger";
       $("page-result").textContent = (r && r.error) || "Failed";
