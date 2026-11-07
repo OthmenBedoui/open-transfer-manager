@@ -12,3 +12,4 @@
 *.ttf binary
 *.webp binary
 *.sh text eol=lf
+*.gif binary

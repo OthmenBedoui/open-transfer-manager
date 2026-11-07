@@ -6,6 +6,10 @@
   A fast, light and open-source download manager for <b>Windows</b>, <b>Linux</b> and <b>macOS</b>.
 </p>
 
+<p align="center">
+  <img src="assets/demo/otm-download.gif" alt="Paste a YouTube link, pick MP3 320 kbps, the file downloads and is saved in Music" width="800">
+</p>
+
 ## Features
 
 - **Fast downloads** — several connections per file, pause and resume.
@@ -14,6 +18,10 @@
 - **Browser extension** — Chrome, Edge, Brave and Firefox: send downloads to the app, Download button on videos.
 - **Organized** — files sorted by type (Video, Music, Documents…), queue, scheduler and speed limit.
 - **Light and dark themes** — one small native app, no account, no ads, no tracking.
+
+<p align="center">
+  <img src="assets/demo/otm-upload.gif" alt="One file sent to Google Drive, Dropbox, an SFTP server and S3 at once, then a folder moved from Google Drive to OneDrive" width="800">
+</p>
 
 ## Install
 
