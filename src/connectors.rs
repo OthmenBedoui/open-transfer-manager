@@ -330,8 +330,15 @@ impl Connector {
 
     /// The same settings as an rclone config file (drives with sign-in tokens, so
     /// rclone can write a renewed token back).
+    #[cfg(test)]
     pub fn rclone_ini(&self, secret: Option<&str>) -> String {
-        let mut s = format!("[{REMOTE}]\n");
+        self.rclone_section(REMOTE, secret)
+    }
+
+    /// One `[name]` section of an rclone config file (two of them for a transfer
+    /// between drives: `src` and `dst`).
+    pub fn rclone_section(&self, name: &str, secret: Option<&str>) -> String {
+        let mut s = format!("[{name}]\n");
         for (k, v) in self.rclone_options(secret) {
             // values stay on one line: never let one start another setting or section
             let v = v.replace(['\r', '\n'], "");
@@ -477,11 +484,26 @@ impl Connector {
 
     /// `otm:folder/name`
     pub fn remote_path(&self, name: &str) -> String {
+        self.path_on(REMOTE, name)
+    }
+
+    /// `remote:folder/name` for a remote of another name (`dst` in a transfer).
+    pub fn path_on(&self, remote: &str, name: &str) -> String {
         let folder = self.folder.trim().trim_end_matches('/');
         if folder.is_empty() {
-            format!("{REMOTE}:{name}")
+            format!("{remote}:{name}")
         } else {
-            format!("{REMOTE}:{folder}/{name}")
+            format!("{remote}:{folder}/{name}")
+        }
+    }
+
+    /// Where browsing this destination starts: the whole drive, or the configured
+    /// folder for servers and S3 (a bucket is needed there).
+    pub fn browse_root(&self) -> String {
+        if self.kind.is_drive() {
+            String::new()
+        } else {
+            self.folder.trim().trim_end_matches('/').to_string()
         }
     }
 }

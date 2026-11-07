@@ -186,20 +186,26 @@ fn obscure(program: &Path, plain: &str) -> Result<String, String> {
     }
 }
 
-/// A ready-to-run rclone and the environment that defines the `otm:` remote.
+/// A ready-to-run rclone and the settings that define its remote(s): `otm:` for one
+/// destination, `src:` and `dst:` for a transfer between two.
 pub struct Remote {
     program: PathBuf,
     kind: Kind,
     env: Vec<(String, String)>,
-    token_file: Option<TokenFile>,
+    config: Option<ConfigFile>,
 }
 
-/// Private config file for a drive signed in through the browser.
-struct TokenFile {
+/// Private config file (drives signed in through the browser, transfers): it lives only
+/// while rclone runs; renewed tokens in it are saved back to the keychain.
+struct ConfigFile {
     path: PathBuf,
+    saves: Vec<TokenSave>,
+}
+
+struct TokenSave {
+    section: String,
     secret_key: String,
     original: String,
-    save_back: bool,
 }
 
 fn run_dir() -> PathBuf {
@@ -226,9 +232,23 @@ pub fn clean_run_dir() {
     }
 }
 
-/// The `token = ...` value of an rclone config file.
+/// The `token = ...` value of the first section of an rclone config file.
+#[cfg(test)]
 pub fn token_in(ini: &str) -> Option<String> {
+    let first = ini
+        .lines()
+        .find(|l| l.starts_with('['))
+        .map(|l| l.trim_matches(['[', ']']).to_string())?;
+    token_in_section(ini, &first)
+}
+
+/// The `token = ...` value of section `[name]`.
+pub fn token_in_section(ini: &str, name: &str) -> Option<String> {
+    let header = format!("[{name}]");
     ini.lines()
+        .skip_while(|l| l.trim() != header)
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
         .find_map(|l| l.strip_prefix("token = "))
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
@@ -236,18 +256,60 @@ pub fn token_in(ini: &str) -> Option<String> {
 
 impl Drop for Remote {
     fn drop(&mut self) {
-        let Some(t) = self.token_file.take() else {
+        let Some(c) = self.config.take() else {
             return;
         };
-        if t.save_back
-            && let Ok(text) = std::fs::read_to_string(&t.path)
-            && let Some(token) = token_in(&text)
-            && token != t.original
-        {
-            let _ = secrets::set(&t.secret_key, &token);
+        if let Ok(text) = std::fs::read_to_string(&c.path) {
+            for s in &c.saves {
+                if let Some(token) = token_in_section(&text, &s.section)
+                    && token != s.original
+                {
+                    let _ = secrets::set(&s.secret_key, &token);
+                }
+            }
         }
-        let _ = std::fs::remove_file(&t.path);
+        let _ = std::fs::remove_file(&c.path);
     }
+}
+
+fn private_config(text: &str) -> Result<PathBuf, String> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let path = run_dir().join(format!(
+        "otm-{}-{}.conf",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    secrets::write_private(&path, text)
+        .map_err(|e| format!("Could not prepare the transfer: {e}"))?;
+    Ok(path)
+}
+
+/// One `[name]` section for `c`, with its secret read from the keychain (or `typed`).
+fn section(
+    program: &Path,
+    c: &Connector,
+    name: &str,
+    typed: Option<&str>,
+    saves: &mut Vec<TokenSave>,
+) -> Result<String, String> {
+    let secret = match typed {
+        Some(s) => Some(s.to_string()).filter(|s| !s.is_empty()),
+        None => secrets::get(&c.secret_key()),
+    };
+    c.validate(secret.is_some())
+        .map_err(|e| format!("{}: {e}", c.display_name()))?;
+    let secret = match secret {
+        Some(s) if c.needs_obscured_secret() => Some(obscure(program, &s)?),
+        s => s,
+    };
+    if c.kind.uses_browser_sign_in() && typed.is_none() && c.id != 0 {
+        saves.push(TokenSave {
+            section: name.to_string(),
+            secret_key: c.secret_key(),
+            original: secret.clone().unwrap_or_default(),
+        });
+    }
+    Ok(c.rclone_section(name, secret.as_deref()))
 }
 
 impl Remote {
@@ -255,33 +317,30 @@ impl Remote {
     /// the saved one from the keychain.
     pub fn new(c: &Connector, typed_secret: Option<&str>) -> Result<Self, String> {
         let program = path().ok_or("The upload engine (rclone) is not installed.")?;
+        if c.kind.uses_browser_sign_in() {
+            let mut saves = Vec::new();
+            let text = section(
+                &program,
+                c,
+                crate::connectors::REMOTE,
+                typed_secret,
+                &mut saves,
+            )?;
+            return Ok(Remote {
+                config: Some(ConfigFile {
+                    path: private_config(&text)?,
+                    saves,
+                }),
+                program,
+                kind: c.kind,
+                env: Vec::new(),
+            });
+        }
         let secret = match typed_secret {
             Some(s) => Some(s.to_string()).filter(|s| !s.is_empty()),
             None => secrets::get(&c.secret_key()),
         };
         c.validate(secret.is_some())?;
-        if c.kind.uses_browser_sign_in() {
-            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-            let token = secret.unwrap_or_default();
-            let path = run_dir().join(format!(
-                "otm-{}-{}.conf",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::SeqCst)
-            ));
-            secrets::write_private(&path, &c.rclone_ini(Some(&token)))
-                .map_err(|e| format!("Could not prepare the upload: {e}"))?;
-            return Ok(Remote {
-                program,
-                kind: c.kind,
-                env: Vec::new(),
-                token_file: Some(TokenFile {
-                    path,
-                    secret_key: c.secret_key(),
-                    original: token,
-                    save_back: typed_secret.is_none() && c.id != 0,
-                }),
-            });
-        }
         let secret = match secret {
             Some(s) if c.needs_obscured_secret() => Some(obscure(&program, &s)?),
             s => s,
@@ -290,14 +349,32 @@ impl Remote {
             env: c.rclone_env(secret.as_deref()),
             kind: c.kind,
             program,
-            token_file: None,
+            config: None,
+        })
+    }
+
+    /// Two remotes in one rclone: `src:` and `dst:`, to copy from one drive or server
+    /// to another. Files stream through this computer; nothing is written to its disk.
+    pub fn pair(src: &Connector, dst: &Connector) -> Result<Self, String> {
+        let program = path().ok_or("The upload engine (rclone) is not installed.")?;
+        let mut saves = Vec::new();
+        let text = section(&program, src, "src", None, &mut saves)?
+            + &section(&program, dst, "dst", None, &mut saves)?;
+        Ok(Remote {
+            config: Some(ConfigFile {
+                path: private_config(&text)?,
+                saves,
+            }),
+            program,
+            kind: dst.kind,
+            env: Vec::new(),
         })
     }
 
     fn command(&self) -> Command {
         let mut c = base_command(&self.program);
-        if let Some(t) = &self.token_file {
-            c.env("RCLONE_CONFIG", &t.path);
+        if let Some(cf) = &self.config {
+            c.env("RCLONE_CONFIG", &cf.path);
         }
         c.envs(self.env.iter().map(|(k, v)| (k, v))).args([
             "--contimeout",
@@ -308,6 +385,47 @@ impl Remote {
             "2",
         ]);
         c
+    }
+
+    /// Folders and files directly inside `path` of the `otm:` remote.
+    pub fn list(&self, path: &str) -> Result<Vec<Entry>, String> {
+        let out = self
+            .command()
+            .args([
+                "lsjson",
+                "--max-depth",
+                "1",
+                "--no-mimetype",
+                "--no-modtime",
+            ])
+            .arg(format!("{}:{path}", crate::connectors::REMOTE))
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(if err.contains("directory not found") {
+                "This folder doesn't exist yet.".into()
+            } else {
+                readable_error(&err)
+            });
+        }
+        let v: Vec<Value> = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+        let mut items: Vec<Entry> = v
+            .iter()
+            .filter_map(|e| {
+                Some(Entry {
+                    name: e["Name"].as_str()?.to_string(),
+                    is_dir: e["IsDir"].as_bool().unwrap_or(false),
+                    size: e["Size"].as_i64().filter(|s| *s >= 0).map(|s| s as u64),
+                })
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        Ok(items)
     }
 
     /// List the destination folder; then, where the server reports it, the free space.
@@ -353,19 +471,19 @@ impl Remote {
         Ok(text)
     }
 
-    /// Copy a file (or a folder, with its content) to `remote`, reporting progress.
-    /// Returns when done, failed, or `stop` is set (then the process is killed).
-    pub fn upload(
+    /// Copy `source` (a local path, or `src:path` in a transfer) to `target`.
+    pub fn copy(
         &self,
-        local: &Path,
-        remote: &str,
+        source: &std::ffi::OsStr,
+        is_dir: bool,
+        target: &str,
         stop: &AtomicBool,
         mut progress: impl FnMut(Stats),
     ) -> Result<(), String> {
         let mut cmd = self.command();
-        cmd.arg(if local.is_dir() { "copy" } else { "copyto" })
-            .arg(local)
-            .arg(remote)
+        cmd.arg(if is_dir { "copy" } else { "copyto" })
+            .arg(source)
+            .arg(target)
             .args([
                 "--use-json-log",
                 "--stats",
@@ -429,6 +547,14 @@ impl Remote {
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
         (out.status.success() && s.starts_with("http")).then_some(s)
     }
+}
+
+/// One item of a remote folder listing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: Option<u64>,
 }
 
 // ------------------------------------------------------------------ browser sign-in
@@ -714,6 +840,13 @@ mod tests {
         assert_eq!(
             token_in("[otm]\ntype = drive\ntoken = {\"a\":1}\nscope = drive\n").as_deref(),
             Some("{\"a\":1}")
+        );
+        let two = "[src]\ntype = drive\ntoken = A\n[dst]\ntype = sftp\n[x]\ntoken = C\n";
+        assert_eq!(token_in_section(two, "src").as_deref(), Some("A"));
+        assert_eq!(
+            token_in_section(two, "dst"),
+            None,
+            "never read the next section's token"
         );
     }
 

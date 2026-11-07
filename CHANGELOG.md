@@ -17,6 +17,12 @@
   OTM ne voit jamais le mot de passe), MEGA (e-mail et mot de passe). Jeton renouvelé par rclone
   réenregistré dans le trousseau ; jetons longs découpés (limite du Gestionnaire d'identification Windows).
 - Un envoi à la fois par disque cloud ; correction : un envoi pouvait démarrer deux fois.
+- Nouvelle page **Transfer** : copier des fichiers ou dossiers d'un disque/serveur vers d'autres
+  (Google Drive → OneDrive, SFTP → S3…) en parcourant ses dossiers ; les données transitent par
+  l'ordinateur sans être écrites sur son disque (rclone, deux remotes `src:`/`dst:`).
+- Logos des services (Google Drive, Dropbox, MEGA, Box ; Simple Icons, CC0) et icônes symboliques
+  pour les serveurs (terminal SFTP, serveur FTP, globe WebDAV, seau S3) ; OneDrive et pCloud : nuage
+  à leurs couleurs (pas de logo libre disponible).
 - Netflix, Crunchyroll, Disney+, Prime Video, Spotify… : message clair (vidéos protégées par DRM,
   utiliser le téléchargement hors ligne de l'application officielle) au lieu d'enregistrer la page web.
 

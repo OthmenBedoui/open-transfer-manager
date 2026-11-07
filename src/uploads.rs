@@ -39,6 +39,11 @@ pub struct Job {
     pub error: String,
     pub want_link: bool,
     pub link: Option<String>,
+    /// Transfer between destinations: the connector files come from, its name, and the
+    /// path on it (`None` for files on this computer).
+    pub source: Option<u64>,
+    pub source_name: String,
+    pub source_path: String,
     pub finished_at: Option<f64>,
     stop: Arc<AtomicBool>,
 }
@@ -285,6 +290,9 @@ impl Uploads {
                     link: None,
                     finished_at: None,
                     stop: Arc::new(AtomicBool::new(false)),
+                    source: None,
+                    source_name: String::new(),
+                    source_path: String::new(),
                 };
                 lock(&self.inner.jobs).push(Arc::new(Mutex::new(job)));
                 added += 1;
@@ -292,6 +300,70 @@ impl Uploads {
         }
         self.tick();
         added
+    }
+
+    /// Copy items of one destination (`src`, paths relative to its root) to others.
+    /// Returns how many jobs were added.
+    pub fn send_remote(
+        &self,
+        src: u64,
+        items: &[(String, bool, Option<u64>)],
+        dests: &[u64],
+        want_link: bool,
+    ) -> usize {
+        let Some(from) = self.connector(src) else {
+            return 0;
+        };
+        let mut added = 0;
+        for d in dests.iter().filter(|d| **d != src) {
+            let Some(c) = self.connector(*d) else {
+                continue;
+            };
+            for (path, is_dir, size) in items {
+                let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                let job = Job {
+                    id: self.inner.next_job.fetch_add(1, Ordering::SeqCst),
+                    file: PathBuf::from(name),
+                    name: name.to_string(),
+                    is_dir: *is_dir,
+                    dest: c.id,
+                    dest_name: c.display_name(),
+                    dest_mono: c.kind.mono(),
+                    status: JobStatus::Waiting,
+                    sent: 0,
+                    total: size.unwrap_or(0),
+                    speed: 0.0,
+                    eta: None,
+                    error: String::new(),
+                    want_link,
+                    link: None,
+                    finished_at: None,
+                    stop: Arc::new(AtomicBool::new(false)),
+                    source: Some(from.id),
+                    source_name: from.display_name(),
+                    source_path: path.clone(),
+                };
+                lock(&self.inner.jobs).push(Arc::new(Mutex::new(job)));
+                added += 1;
+            }
+        }
+        self.tick();
+        added
+    }
+
+    /// List a folder of a destination in the background (Transfer page).
+    pub fn browse(
+        c: Connector,
+        path: String,
+    ) -> mpsc::Receiver<Result<Vec<rclone::Entry>, String>> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(Remote::new(&c, None).and_then(|r| r.list(&path)));
+        });
+        rx
     }
 
     fn find(&self, id: u64) -> Option<JobRef> {
@@ -401,7 +473,7 @@ impl Uploads {
     }
 
     fn run(&self, job: JobRef) {
-        let (file, name, dest, stop, want_link) = {
+        let (file, name, dest, stop, want_link, source, source_path, is_dir) = {
             let j = lock(&job);
             (
                 j.file.clone(),
@@ -409,19 +481,38 @@ impl Uploads {
                 j.dest,
                 j.stop.clone(),
                 j.want_link,
+                j.source,
+                j.source_path.clone(),
+                j.is_dir,
             )
         };
         let result = (|| {
             let c = self
                 .connector(dest)
                 .ok_or("This destination was removed.")?;
-            if !file.exists() {
-                return Err(format!("File not found: {}", file.display()));
-            }
-            let remote = Remote::new(&c, None)?;
-            let target = c.remote_path(&name);
             let repaint = self.clone();
-            remote.upload(&file, &target, &stop, |s| {
+            let (remote, target) = match source {
+                Some(src) => {
+                    let from = self.connector(src).ok_or("The source was removed.")?;
+                    (Remote::pair(&from, &c)?, c.path_on("dst", &name))
+                }
+                None => {
+                    if !file.exists() {
+                        return Err(format!("File not found: {}", file.display()));
+                    }
+                    (Remote::new(&c, None)?, c.remote_path(&name))
+                }
+            };
+            let from: std::ffi::OsString = match source {
+                Some(_) => format!("src:{source_path}").into(),
+                None => file.clone().into_os_string(),
+            };
+            let is_dir = if source.is_some() {
+                is_dir
+            } else {
+                file.is_dir()
+            };
+            remote.copy(&from, is_dir, &target, &stop, |s| {
                 {
                     let mut j = lock(&job);
                     j.sent = s.bytes;
@@ -492,6 +583,9 @@ impl Uploads {
             ("Backblaze B2", Kind::S3, "otm-releases/builds"),
             ("Nextcloud", Kind::Webdav, "Uploads"),
             ("NAS", Kind::Ftp, "/public"),
+            ("Google Drive", Kind::Gdrive, "OTM"),
+            ("OneDrive", Kind::Onedrive, "Backups"),
+            ("Dropbox", Kind::Dropbox, "Shared"),
         ] {
             let mut c = Connector::new(kind);
             c.name = name.into();
@@ -549,6 +643,7 @@ impl Uploads {
                 0.0,
                 "",
             ),
+            ("Releases", 5, JobStatus::Running, 0.34, 11.2e6, ""),
         ];
         for (name, d, status, frac, speed, err) in rows {
             let c = &ids[d];
@@ -578,6 +673,13 @@ impl Uploads {
                 }),
                 finished_at: None,
                 stop: Arc::new(AtomicBool::new(false)),
+                source: (d == 5).then_some(5),
+                source_name: if d == 5 {
+                    "Google Drive".into()
+                } else {
+                    String::new()
+                },
+                source_path: String::new(),
             };
             lock(&self.inner.jobs).push(Arc::new(Mutex::new(job)));
         }
@@ -694,6 +796,9 @@ mod tests {
     #[ignore]
     fn live_servers() {
         let root = PathBuf::from(std::env::var("OTM_LIVE_DIR").expect("OTM_LIVE_DIR"));
+        // written before the server first lists the folder (rclone serve caches listings)
+        std::fs::create_dir_all(root.join("sftp/in/box")).unwrap();
+        std::fs::write(root.join("sftp/in/box/only-remote.txt"), "from sftp").unwrap();
         let up = Uploads::new(false);
         let pw = "s3cret pw";
         let mut sftp = Connector::new(Kind::Sftp);
@@ -761,6 +866,50 @@ mod tests {
                 std::fs::read_to_string(d.join("folder/sub/a.txt")).unwrap(),
                 "hello",
                 "{dir}"
+            );
+        }
+        // transfer between two destinations: sftp -> ftp and s3, nothing on local disk
+        let listed = Remote::new(&up.connector(ids[0]).unwrap(), None)
+            .unwrap()
+            .list("in/box")
+            .unwrap();
+        assert!(listed.iter().any(|e| e.name == "folder" && e.is_dir));
+        assert!(
+            listed
+                .iter()
+                .any(|e| e.name == "only-remote.txt" && e.size == Some(9))
+        );
+        let n = up.send_remote(
+            ids[0],
+            &[
+                ("in/box/only-remote.txt".into(), false, Some(9)),
+                ("in/box/folder".into(), true, None),
+            ],
+            &[ids[1], ids[3], ids[0]],
+            false,
+        );
+        assert_eq!(n, 4, "the source itself is skipped");
+        let t0 = std::time::Instant::now();
+        while up.active_count() > 0 && t0.elapsed().as_secs() < 60 {
+            up.tick();
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        for j in up.jobs().iter().filter(|j| j.source.is_some()) {
+            println!(
+                "{} {} -> {}: {:?} {}",
+                j.source_name, j.name, j.dest_name, j.status, j.error
+            );
+            assert_eq!(j.status, JobStatus::Done, "{}", j.error);
+        }
+        for dir in ["ftp", "s3/bucket1/builds"] {
+            let d = root.join(dir);
+            assert_eq!(
+                std::fs::read_to_string(d.join("only-remote.txt")).unwrap(),
+                "from sftp"
+            );
+            assert_eq!(
+                std::fs::read_to_string(d.join("folder/sub/a.txt")).unwrap(),
+                "hello"
             );
         }
         for id in ids {

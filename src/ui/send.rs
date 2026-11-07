@@ -54,16 +54,10 @@ pub fn kind_colors(kind: Kind, dark: bool) -> (Color32, Color32) {
     }
 }
 
-pub fn mono_badge(painter: &egui::Painter, rect: Rect, text: &str, kind: Kind, dark: bool) {
-    let (bg, fg) = kind_colors(kind, dark);
-    painter.rect_filled(rect, (rect.width() * 0.27) as u8, bg);
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        theme::bold(rect.width() * 0.33),
-        fg,
-    );
+/// A destination's tile: the service's own logo for cloud drives, a symbolic icon for
+/// servers (terminal = SFTP, server = FTP, globe = WebDAV, bucket = S3).
+pub fn mono_badge(painter: &egui::Painter, rect: Rect, _label: &str, kind: Kind, dark: bool) {
+    super::brand::dest_icon(painter, rect, kind, dark);
 }
 
 /// Banner shown on Send and Connectors while rclone is missing.
@@ -444,7 +438,7 @@ impl OtmApp {
         });
     }
 
-    fn transfers(&mut self, ui: &mut egui::Ui, p: &Palette, jobs: &[Job]) {
+    pub(super) fn transfers(&mut self, ui: &mut egui::Ui, p: &Palette, jobs: &[Job]) {
         widgets::card(p)
             .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
@@ -520,7 +514,11 @@ impl OtmApp {
             .galley(pos2(x0, row.center().y - 16.0), g, p.text);
         let g = widgets::elided(
             ui.painter(),
-            &format!("→ {}", j.dest_name),
+            &if j.source.is_some() {
+                format!("{} → {}", j.source_name, j.dest_name)
+            } else {
+                format!("→ {}", j.dest_name)
+            },
             theme::font(11.5),
             p.muted,
             name_w,

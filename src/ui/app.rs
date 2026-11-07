@@ -5,6 +5,7 @@ use super::dialogs::{AddDialog, DeleteDialog, SettingsDialog};
 use super::icons::{self, Icon};
 use super::send::SendState;
 use super::theme::{self, Palette};
+use super::transfer::TransferState;
 use super::widgets;
 use crate::api::ApiServer;
 use crate::manager::{DlRef, Event, Manager, lock};
@@ -24,6 +25,7 @@ pub enum View {
     Failed,
     Category(String),
     Send,
+    Transfer,
     Connectors,
 }
 
@@ -37,6 +39,7 @@ impl View {
             View::Failed => "Failed".into(),
             View::Category(c) => c.clone(),
             View::Send => "Send".into(),
+            View::Transfer => "Transfer".into(),
             View::Connectors => "Connectors".into(),
         }
     }
@@ -48,7 +51,7 @@ impl View {
             View::Done => d.status == Status::Complete,
             View::Failed => d.status == Status::Error,
             View::Category(c) => &d.category == c,
-            View::Send | View::Connectors => false,
+            View::Send | View::Transfer | View::Connectors => false,
         }
     }
 }
@@ -60,6 +63,7 @@ pub struct OtmApp {
     pub(super) uploads: Uploads,
     pub(super) send: SendState,
     pub(super) connect: ConnectState,
+    pub(super) transfer: TransferState,
     search: String,
     selected: Option<u64>,
     logo: Option<egui::TextureHandle>,
@@ -171,10 +175,16 @@ pub fn run(
             let first_view = match std::env::var("OTM_SHOT_VIEW").as_deref() {
                 Ok("send") if screenshot.is_some() => View::Send,
                 Ok("connectors") if screenshot.is_some() => View::Connectors,
+                Ok("transfer") if screenshot.is_some() => View::Transfer,
                 _ => View::All,
             };
             let mut send = SendState::default();
             let mut connect = ConnectState::default();
+            let transfer = if first_view == View::Transfer {
+                TransferState::for_demo(5)
+            } else {
+                TransferState::default()
+            };
             if first_view == View::Send {
                 send.chosen = [1, 2].into_iter().collect();
                 send.links = true;
@@ -194,6 +204,7 @@ pub fn run(
                 uploads,
                 send,
                 connect,
+                transfer,
                 search: String::new(),
                 selected: None,
                 logo,
@@ -420,6 +431,7 @@ impl OtmApp {
         let uploading = self.uploads.active_count();
         let dests = self.uploads.connectors().len();
         self.nav_item(ui, p, View::Send, Icon::Upload, None, uploading);
+        self.nav_item(ui, p, View::Transfer, Icon::Swap, None, 0);
         self.nav_item(ui, p, View::Connectors, Icon::Plug, None, dests);
         ui.add_space(10.0);
         section(ui, p, "CATEGORIES");
@@ -1292,6 +1304,10 @@ impl eframe::App for OtmApp {
                     }
                     View::Connectors => {
                         self.connectors_view(ui, &p);
+                        return;
+                    }
+                    View::Transfer => {
+                        self.transfer_view(ui, &p);
                         return;
                     }
                     _ => {}

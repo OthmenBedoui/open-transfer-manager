@@ -10,7 +10,7 @@
 
 - **Fast downloads** — several connections per file, pause and resume.
 - **Video and MP3** — from YouTube and 1000+ sites, choose the quality or MP3 (320 / 192 / 128 kbps).
-- **Send anywhere** — drop files and upload them to several SFTP, FTP, WebDAV (Nextcloud) or S3 servers at once.
+- **Send anywhere** — drop files and upload them to Google Drive, OneDrive, Dropbox, MEGA, pCloud, Box, SFTP, FTP, WebDAV or S3, several at once — or move files between two drives.
 - **Browser extension** — Chrome, Edge, Brave and Firefox: send downloads to the app, Download button on videos.
 - **Organized** — files sorted by type (Video, Music, Documents…), queue, scheduler and speed limit.
 - **Light and dark themes** — one small native app, no account, no ads, no tracking.
@@ -113,6 +113,17 @@ Open **Connectors**, add a server (SFTP, FTP/FTPS, WebDAV or S3-compatible) and 
 **Send**. Uploads run through [rclone](https://rclone.org); OTM installs it for you the
 first time (checked against its published SHA-256). Passwords and keys stay in Windows
 Credential Manager, the macOS Keychain or the Linux Secret Service.
+
+**Transfer** copies files from one drive or server to others (Google Drive → OneDrive,
+SFTP → S3…): browse the source, tick files or folders, pick the destinations. Data streams
+through your computer and is never written to its disk.
+
+> Netflix, Crunchyroll, Disney+, Prime Video, Spotify and other streaming services lock
+> their videos with DRM. OTM does not remove DRM; it tells you so and points to the
+> service's own offline download.
+
+Service logos come from [Simple Icons](https://simpleicons.org) (CC0) and only identify the
+services you connect to; the trademarks belong to their owners.
 
 ## Browser extension
 

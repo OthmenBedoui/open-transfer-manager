@@ -1,12 +1,14 @@
 //! Desktop interface (egui).
 
 pub mod app;
+pub mod brand;
 pub mod connect;
 pub mod dialogs;
 pub mod icons;
 pub mod send;
 pub mod text;
 pub mod theme;
+pub mod transfer;
 pub mod widgets;
 
 pub fn run(
