@@ -16,43 +16,68 @@
 
 ## Install
 
-### Windows
+All files are on the [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases) page.
+For videos and MP3, OTM also needs **ffmpeg** and **yt-dlp**: each section below shows how to get them.
 
-1. Download `OTM-Setup-x.y.z.exe` from [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases).
-2. Run it and follow the steps. No administrator rights needed.
+### Windows 10 / 11
+
+1. Download `OTM-Setup-x.y.z.exe` and run it. No administrator rights needed.
+2. Open **Open Transfer Manager** from the Start menu.
+3. Videos and MP3 — in a terminal:
+
+```powershell
+winget install yt-dlp.yt-dlp
+winget install Gyan.FFmpeg
+```
+
+Then close and reopen OTM so it finds them.
+
+### macOS (Apple Silicon: M1, M2, M3, M4)
+
+1. Download `otm-macos-arm64`, then in Terminal:
+
+```bash
+cd ~/Downloads
+mv otm-macos-arm64 otm
+chmod +x otm
+xattr -d com.apple.quarantine otm       # the app is not signed yet
+sudo mkdir -p /usr/local/bin && sudo mv otm /usr/local/bin/
+otm                                     # start the app
+```
+
+2. Videos and MP3 (with [Homebrew](https://brew.sh)): `brew install yt-dlp ffmpeg`
+
+Intel Mac: no download yet, see [Build from source](#build-from-source).
 
 ### Linux
 
-1. Download `otm-linux-x86_64` from [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases).
-2. Rename it, make it runnable and start it:
+The Linux file works on most current distributions (64-bit PC, glibc 2.35 or newer).
+First install it — same steps on every distribution:
 
 ```bash
+cd ~/Downloads
 mv otm-linux-x86_64 otm
 chmod +x otm
-./otm
+sudo mv otm /usr/local/bin/
+otm                                     # start the app
 ```
 
-### macOS
+Then get ffmpeg for your distribution, and the latest yt-dlp:
 
-1. Download `otm-macos-arm64` from [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases).
-2. The app is not signed yet, so allow it once, then start it:
+| Distribution | ffmpeg | yt-dlp |
+|---|---|---|
+| **Ubuntu** 22.04+, **Linux Mint** 21+, **Pop!_OS**, **Zorin**, **elementary OS** | `sudo apt install ffmpeg` | `otm update-ytdlp` |
+| **Debian** 12+ | `sudo apt install ffmpeg` | `otm update-ytdlp` |
+| **Fedora** | `sudo dnf install ffmpeg-free` | `otm update-ytdlp` |
+| **Arch**, **Manjaro**, **EndeavourOS** | `sudo pacman -S ffmpeg` | `otm update-ytdlp` |
+| **openSUSE** Tumbleweed | `sudo zypper install ffmpeg` | `otm update-ytdlp` |
 
-```bash
-mv otm-macos-arm64 otm
-chmod +x otm
-xattr -d com.apple.quarantine otm
-./otm
-```
+`otm update-ytdlp` downloads the official yt-dlp for OTM. It is better than the
+distribution package, which is often too old for YouTube.
 
-### For videos and MP3 (all systems)
-
-Install **yt-dlp** and **ffmpeg** once:
-
-| System | Command |
-|---|---|
-| Windows | `winget install yt-dlp.yt-dlp` then `winget install Gyan.FFmpeg` |
-| Linux (Debian/Ubuntu) | `sudo apt install ffmpeg` then `./otm update-ytdlp` |
-| macOS | `brew install yt-dlp ffmpeg` |
+**Not supported by the download yet** — build from source instead:
+older distributions (Ubuntu 20.04, Debian 11, RHEL / Rocky / Alma 8–9, openSUSE Leap 15),
+Alpine, and ARM computers (Raspberry Pi, ARM laptops).
 
 ## Use
 
@@ -60,7 +85,7 @@ Install **yt-dlp** and **ffmpeg** once:
 2. For a video page, choose a quality or **Audio only** for MP3.
 3. Click **Download**. Files go to your Downloads folder, sorted by type.
 
-Command line (on Linux and macOS, write `./otm` if `otm` is not in your PATH):
+Command line:
 
 ```bash
 otm add https://example.com/file.zip           # download a file
@@ -79,7 +104,19 @@ otm register-browsers
 
 ## Build from source
 
-Needs [Rust](https://rustup.rs) (stable):
+For systems without a ready-made download (Intel Mac, older Linux, ARM).
+Needs [Rust](https://rustup.rs) (stable) and Git.
+
+On Linux, install the build tools first:
+
+| Distribution | Command |
+|---|---|
+| Ubuntu / Debian / Mint | `sudo apt install build-essential pkg-config libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev` |
+| Fedora / RHEL / Rocky | `sudo dnf install gcc pkgconf libxkbcommon-devel wayland-devel libX11-devel mesa-libGL-devel` |
+| Arch / Manjaro | `sudo pacman -S --needed base-devel libxkbcommon wayland libx11 mesa` |
+| openSUSE | `sudo zypper install gcc pkgconf libxkbcommon-devel wayland-devel libX11-devel Mesa-libGL-devel` |
+
+On macOS: `xcode-select --install`. Then, on any system:
 
 ```bash
 git clone https://github.com/OthmenBedoui/open-transfer-manager
@@ -88,8 +125,7 @@ cargo build --release
 ./target/release/otm
 ```
 
-On Linux, install the window libraries first:
-`sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev`.
+On Windows, `scripts/install-windows.ps1` builds the setup (see [docs/WINDOWS.md](docs/WINDOWS.md)).
 
 ## License
 
