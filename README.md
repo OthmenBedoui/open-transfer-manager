@@ -32,37 +32,46 @@ winget install Gyan.FFmpeg
 
 Then close and reopen OTM so it finds them.
 
-### macOS (Apple Silicon: M1, M2, M3, M4)
+### Linux and macOS — one command
 
-1. Download `otm-macos-arm64`, then in Terminal:
+Open a terminal and paste:
 
 ```bash
-cd ~/Downloads
-mv otm-macos-arm64 otm
-chmod +x otm
-xattr -d com.apple.quarantine otm       # the app is not signed yet
-sudo mkdir -p /usr/local/bin && sudo mv otm /usr/local/bin/
-otm                                     # start the app
+curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash
 ```
 
-2. Videos and MP3 (with [Homebrew](https://brew.sh)): `brew install yt-dlp ffmpeg`
+It downloads the app (and checks its SHA-256), adds it to your applications menu
+(Linux) or `~/Applications` (macOS), offers to install ffmpeg, sets up yt-dlp and
+connects your browsers. No `sudo` for the app itself. Then open
+**Open Transfer Manager** from your menu, or type `otm`.
 
-Intel Mac: no download yet, see [Build from source](#build-from-source).
+Works on **Ubuntu** 22.04+, **Linux Mint** 21+, **Pop!_OS**, **Zorin**, **elementary OS**,
+**Debian** 12+, **Fedora**, **Arch**, **Manjaro**, **EndeavourOS**, **openSUSE** Tumbleweed,
+and **macOS** on Apple Silicon (M1–M4). On other systems (Intel Mac, ARM, older
+distributions) the installer offers to build the app from source.
 
-### Linux
+Uninstall (keeps your files and settings; add `--purge` to remove settings too):
 
-The Linux file works on most current distributions (64-bit PC, glibc 2.35 or newer).
-First install it — same steps on every distribution:
+```bash
+curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash -s -- --uninstall
+```
+
+<details>
+<summary>Manual install (without the script)</summary>
+
+1. Download `otm-linux-x86_64` (Linux) or `otm-macos-arm64` (macOS) from Releases, then:
 
 ```bash
 cd ~/Downloads
-mv otm-linux-x86_64 otm
+mv otm-linux-x86_64 otm                 # or: mv otm-macos-arm64 otm
 chmod +x otm
+xattr -d com.apple.quarantine otm       # macOS only: the app is not signed yet
 sudo mv otm /usr/local/bin/
 otm                                     # start the app
 ```
 
-Then get ffmpeg for your distribution, and the latest yt-dlp:
+2. macOS: get videos and MP3 with [Homebrew](https://brew.sh): `brew install yt-dlp ffmpeg`.
+3. Linux: get ffmpeg for your distribution, and the latest yt-dlp:
 
 | Distribution | ffmpeg | yt-dlp |
 |---|---|---|
@@ -75,9 +84,11 @@ Then get ffmpeg for your distribution, and the latest yt-dlp:
 `otm update-ytdlp` downloads the official yt-dlp for OTM. It is better than the
 distribution package, which is often too old for YouTube.
 
-**Not supported by the download yet** — build from source instead:
-older distributions (Ubuntu 20.04, Debian 11, RHEL / Rocky / Alma 8–9, openSUSE Leap 15),
-Alpine, and ARM computers (Raspberry Pi, ARM laptops).
+The ready-made Linux file needs a 64-bit PC with glibc 2.35 or newer. Older distributions
+(Ubuntu 20.04, Debian 11, RHEL / Rocky / Alma 8–9, openSUSE Leap 15), Alpine and ARM
+computers: see [Build from source](#build-from-source), or use the script, which builds for you.
+
+</details>
 
 ## Use
 
@@ -96,7 +107,8 @@ otm doctor                                     # check that everything is set up
 ## Browser extension
 
 Install the extension in your browser (see [the guide](docs/BROWSER_EXTENSIONS.md)).
-On Windows the setup connects it for you; on Linux and macOS, run once:
+The Windows setup and the Linux/macOS script connect it for you. If you install a new
+browser later, run once:
 
 ```bash
 otm register-browsers

@@ -7,6 +7,10 @@
 - Site déterminé par la page d’origine (Referer), sinon par le lien ; domaines imitant un site de confiance refusés.
 - Liste visible et modifiable dans Réglages → Browsers, vide par défaut.
 - Une instance headless accepte aussi les liens des sites de confiance.
+- Installateur en une commande pour Linux et macOS (`install.sh`) : vérification SHA-256,
+  entrée de menu ou app macOS, ffmpeg proposé, yt-dlp, pont navigateur, désinstallation,
+  compilation automatique depuis les sources sur les systèmes sans binaire (Intel Mac, ARM, anciennes distributions).
+- README en anglais avec couverture et installation par système ; workflow de publication des binaires.
 
 ## 0.2.5 — pochette et paroles en option
 

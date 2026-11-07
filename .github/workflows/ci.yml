@@ -52,6 +52,28 @@ jobs:
         run: |
           ./target/release/otm --version
           ./target/release/otm doctor
+      - name: ShellCheck install.sh
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh
+      - name: Installer — install, check, uninstall
+        env:
+          OTM_BINARY: ${{ github.workspace }}/target/release/otm
+        run: |
+          bash install.sh --yes --no-ffmpeg
+          "$HOME/.local/bin/otm" --version
+          if [ "$RUNNER_OS" = Linux ]; then
+            test -f "$HOME/.local/share/applications/open-transfer-manager.desktop"
+          else
+            test -x "$HOME/Applications/Open Transfer Manager.app/Contents/MacOS/open-transfer-manager"
+            test -f "$HOME/Applications/Open Transfer Manager.app/Contents/Info.plist"
+          fi
+          bash install.sh --uninstall --purge
+          test ! -e "$HOME/.local/bin/otm"
+          if [ "$RUNNER_OS" = Linux ]; then
+            test ! -e "$HOME/.local/share/applications/open-transfer-manager.desktop"
+          else
+            test ! -e "$HOME/Applications/Open Transfer Manager.app"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
