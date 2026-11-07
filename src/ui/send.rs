@@ -40,6 +40,12 @@ pub fn kind_colors(kind: Kind, dark: bool) -> (Color32, Color32) {
         Kind::Ftp => ((0x16, 0x30, 0x4F), (0x60, 0xA5, 0xFA), (0x1D, 0x4E, 0xD8)),
         Kind::Webdav => ((0x12, 0x38, 0x32), (0x2D, 0xD4, 0xBF), (0x0F, 0x76, 0x6E)),
         Kind::S3 => ((0x3D, 0x2A, 0x10), (0xFB, 0xBF, 0x24), (0xB4, 0x53, 0x09)),
+        Kind::Gdrive => ((0x1C, 0x3D, 0x2E), (0x4A, 0xDE, 0x80), (0x15, 0x80, 0x3D)),
+        Kind::Onedrive => ((0x17, 0x25, 0x54), (0x93, 0xC5, 0xFD), (0x1E, 0x40, 0xAF)),
+        Kind::Dropbox => ((0x1E, 0x29, 0x4F), (0x81, 0x8C, 0xF8), (0x43, 0x38, 0xCA)),
+        Kind::Mega => ((0x4A, 0x1C, 0x22), (0xF8, 0x71, 0x71), (0xB9, 0x1C, 0x1C)),
+        Kind::Pcloud => ((0x13, 0x2E, 0x45), (0x38, 0xBD, 0xF8), (0x03, 0x69, 0xA1)),
+        Kind::Box => ((0x10, 0x33, 0x4A), (0x7D, 0xD3, 0xFC), (0x07, 0x59, 0x85)),
     };
     if dark {
         (rgb(bg), rgb(fg))
@@ -356,7 +362,7 @@ impl OtmApp {
             ui.add_space(4.0);
             if conns.is_empty() {
                 ui.label(
-                    egui::RichText::new("No destinations yet. Add an SFTP, FTP, WebDAV or S3 server once, then pick it here.")
+                    egui::RichText::new("No destinations yet. Connect a drive (Google Drive, OneDrive, Dropbox…) or a server once, then pick it here.")
                         .size(12.5)
                         .color(p.muted),
                 );
@@ -410,7 +416,7 @@ impl OtmApp {
                 });
             ui.add_space(4.0);
             let mut links = self.send.links;
-            if widgets::switch_row(ui, p, "Create share links", "Where the server supports it (S3, Nextcloud…)", &mut links) {
+            if widgets::switch_row(ui, p, "Create share links", "Where the destination supports it (drives, S3, Nextcloud…)", &mut links) {
                 self.send.links = links;
             }
             ui.add_space(6.0);

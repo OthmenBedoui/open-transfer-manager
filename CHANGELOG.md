@@ -13,6 +13,12 @@
 - Mots de passe et clés dans le Gestionnaire d'identification Windows, le Trousseau macOS ou
   le Secret Service Linux (`secret-tool`) ; sinon un fichier privé (0600), indiqué dans l'interface.
 - Ligne de commande : `otm connectors`, `otm send FICHIER... --to NOM[,NOM] [--link]`.
+- Disques cloud : Google Drive, OneDrive, Dropbox, pCloud et Box (connexion sur la page du fournisseur,
+  OTM ne voit jamais le mot de passe), MEGA (e-mail et mot de passe). Jeton renouvelé par rclone
+  réenregistré dans le trousseau ; jetons longs découpés (limite du Gestionnaire d'identification Windows).
+- Un envoi à la fois par disque cloud ; correction : un envoi pouvait démarrer deux fois.
+- Netflix, Crunchyroll, Disney+, Prime Video, Spotify… : message clair (vidéos protégées par DRM,
+  utiliser le téléchargement hors ligne de l'application officielle) au lieu d'enregistrer la page web.
 
 ## 0.2.7 — ouvrir le fichier et son dossier
 

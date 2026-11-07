@@ -80,6 +80,7 @@ struct Inner {
     persist: bool,
     events: Mutex<Vec<UploadEvent>>,
     frozen: AtomicBool,
+    tick_lock: Mutex<()>,
     repaint: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
@@ -99,6 +100,9 @@ struct SavedConnectors {
 
 impl Uploads {
     pub fn new(persist: bool) -> Self {
+        if persist {
+            rclone::clean_run_dir();
+        }
         let connectors = if persist {
             std::fs::read_to_string(connectors_path())
                 .ok()
@@ -116,6 +120,7 @@ impl Uploads {
                 persist,
                 events: Mutex::new(Vec::new()),
                 frozen: AtomicBool::new(false),
+                tick_lock: Mutex::new(()),
                 repaint: Mutex::new(None),
             }),
         }
@@ -357,18 +362,39 @@ impl Uploads {
         if self.inner.frozen.load(Ordering::SeqCst) {
             return;
         }
+        // the UI and finishing jobs both call this: one at a time, or a job could start twice
+        let _guard = lock(&self.inner.tick_lock);
         let jobs = lock(&self.inner.jobs).clone();
-        let running = jobs
-            .iter()
-            .filter(|j| lock(j).status == JobStatus::Running)
-            .count();
-        let waiting: Vec<JobRef> = jobs
-            .into_iter()
-            .filter(|j| lock(j).status == JobStatus::Waiting)
-            .take(AT_ONCE.saturating_sub(running))
-            .collect();
-        for j in waiting {
+        let mut running = 0;
+        // Drives signed in through the browser upload one file at a time: some (Box)
+        // replace the sign-in token on every renewal, so two uploads must not race for it.
+        let mut busy_drives = std::collections::HashSet::new();
+        for j in &jobs {
+            let j = lock(j);
+            if j.status == JobStatus::Running {
+                running += 1;
+                busy_drives.insert(j.dest);
+            }
+        }
+        for j in jobs {
+            if running >= AT_ONCE {
+                break;
+            }
+            let dest = {
+                let g = lock(&j);
+                if g.status != JobStatus::Waiting {
+                    continue;
+                }
+                g.dest
+            };
+            let one_at_a_time = self
+                .connector(dest)
+                .is_some_and(|c| c.kind.uses_browser_sign_in());
+            if one_at_a_time && !busy_drives.insert(dest) {
+                continue;
+            }
             lock(&j).status = JobStatus::Running;
+            running += 1;
             let me = self.clone();
             std::thread::spawn(move || me.run(j));
         }

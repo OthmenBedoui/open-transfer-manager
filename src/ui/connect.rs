@@ -1,4 +1,5 @@
-//! "Connectors" page: the servers files can be sent to, and the form to add / edit one.
+//! "Connectors" page: the drives and servers files can be sent to, and the form to add,
+//! sign in to, or edit one.
 
 use super::app::{OtmApp, View};
 use super::icons::Icon;
@@ -9,9 +10,63 @@ use crate::connectors::{Connector, Kind, SftpAuth};
 use crate::secrets;
 use crate::uploads::Uploads;
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 
 type TestResult = Result<String, String>;
+
+/// A token, plus the OneDrive drive (id, type) found right after sign-in.
+type SignInResult = Result<(String, Option<(String, String)>), String>;
+
+enum SignInMsg {
+    /// The page to open by hand if the browser did not appear.
+    Link(String),
+    Done(SignInResult),
+}
+
+/// A browser sign-in in progress (`rclone authorize`), cancelled if the form closes.
+struct SignIn {
+    rx: mpsc::Receiver<SignInMsg>,
+    cancel: Arc<AtomicBool>,
+    link: Option<String>,
+}
+
+impl Drop for SignIn {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
+}
+
+impl SignIn {
+    fn start(kind: Kind, ctx: egui::Context) -> Self {
+        let (tx, rx) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stop = cancel.clone();
+        std::thread::spawn(move || {
+            let link_tx = tx.clone();
+            let link_ctx = ctx.clone();
+            let r = crate::rclone::authorize(kind, &stop, |url| {
+                let _ = link_tx.send(SignInMsg::Link(url));
+                link_ctx.request_repaint();
+            })
+            .and_then(|token| {
+                let drive = if kind == Kind::Onedrive {
+                    Some(crate::rclone::onedrive_drive(&token)?)
+                } else {
+                    None
+                };
+                Ok((token, drive))
+            });
+            let _ = tx.send(SignInMsg::Done(r));
+            ctx.request_repaint();
+        });
+        SignIn {
+            rx,
+            cancel,
+            link: None,
+        }
+    }
+}
 
 pub struct Editor {
     pub form: Connector,
@@ -21,6 +76,7 @@ pub struct Editor {
     testing: Option<mpsc::Receiver<TestResult>>,
     result: Option<TestResult>,
     confirm_delete: bool,
+    signin: Option<SignIn>,
 }
 
 impl Editor {
@@ -33,6 +89,7 @@ impl Editor {
             testing: None,
             result: None,
             confirm_delete: false,
+            signin: None,
         }
     }
 
@@ -241,31 +298,44 @@ impl OtmApp {
             });
             ui.add_space(14.0);
         }
-        heading(ui, p, "SERVERS", "for developers and self-hosting");
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            for k in Kind::ALL {
-                if Self::card_tile(
-                    ui,
-                    p,
-                    k,
-                    k.label(),
-                    k.blurb(),
-                    ("+ Connect", p.text),
-                    editing_kind == Some(k),
-                ) {
-                    self.connect.editor = Some(Editor::new(Connector::new(k), false));
+        for (title, hint, kinds) in [
+            (
+                "CLOUD DRIVES",
+                "sign in on the provider's own page",
+                &Kind::DRIVES[..],
+            ),
+            (
+                "SERVERS",
+                "for developers and self-hosting",
+                &Kind::SERVERS[..],
+            ),
+        ] {
+            heading(ui, p, title, hint);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                for &k in kinds {
+                    if Self::card_tile(
+                        ui,
+                        p,
+                        k,
+                        k.label(),
+                        k.blurb(),
+                        ("+ Connect", p.text),
+                        editing_kind == Some(k),
+                    ) {
+                        self.connect.editor = Some(Editor::new(Connector::new(k), false));
+                    }
                 }
-            }
-        });
-        ui.add_space(14.0);
+            });
+            ui.add_space(14.0);
+        }
         heading(ui, p, "COMING NEXT", "");
         widgets::card(p).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 4.0;
             for (title, body) in [
-                ("Cloud drives", "Google Drive, OneDrive, Dropbox, MEGA, pCloud, Box — you'll sign in on the provider's own page."),
                 ("Communities", "Telegram, Discord, PeerTube, Mastodon, then YouTube with your own API key."),
+                ("Relay", "Send a link straight from the web to your drives, without keeping a copy on this computer."),
             ] {
                 ui.label(egui::RichText::new(title).font(theme::bold(13.0)));
                 ui.label(egui::RichText::new(body).size(12.0).color(p.muted));
@@ -284,7 +354,7 @@ impl OtmApp {
                 ui.label(egui::RichText::new("Add a destination").font(theme::bold(15.0)));
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new("Pick a server type on the left, or one of your destinations to edit it.")
+                    egui::RichText::new("Pick a drive or server type on the left, or one of your destinations to edit it.")
                         .size(12.5)
                         .color(p.muted),
                 );
@@ -301,6 +371,38 @@ impl OtmApp {
             {
                 ed.result = Some(r);
                 ed.testing = None;
+            }
+            // browser sign-in progress
+            let mut signed_in = None;
+            if let Some(si) = &mut ed.signin {
+                while let Ok(m) = si.rx.try_recv() {
+                    match m {
+                        SignInMsg::Link(l) => si.link = Some(l),
+                        SignInMsg::Done(r) => signed_in = Some(r),
+                    }
+                }
+            }
+            if let Some(r) = signed_in {
+                ed.signin = None;
+                match r {
+                    Ok((token, drive)) => {
+                        if let Some((id, t)) = drive {
+                            ed.form.drive_id = id;
+                            ed.form.drive_type = t;
+                        }
+                        match uploads.save_connector(ed.connector(), Some(&token)) {
+                            Ok(id) => {
+                                toast = Some(format!("Signed in to {}", ed.form.kind.label()));
+                                if let Some(c) = uploads.connector(id) {
+                                    *ed = Editor::new(c.clone(), true);
+                                    ed.testing = Some(Uploads::test(c, None));
+                                }
+                            }
+                            Err(e) => ed.result = Some(Err(e)),
+                        }
+                    }
+                    Err(e) => ed.result = Some(Err(e)),
+                }
             }
             let kind = ed.form.kind;
             ui.horizontal(|ui| {
@@ -391,6 +493,68 @@ impl OtmApp {
                     changed |= field(ui, p, "Access key", &mut ed.form.access_key, "", false);
                     changed |= field(ui, p, "Secret key", &mut ed.secret, if ed.secret_saved { saved_hint } else { "" }, true);
                     changed |= field(ui, p, "Bucket and folder", &mut ed.form.folder, "my-bucket/releases", false);
+                }
+                Kind::Mega => {
+                    changed |= field(ui, p, "Email", &mut ed.form.user, "you@example.com", false);
+                    changed |= field(ui, p, "Password", &mut ed.secret, if ed.secret_saved { saved_hint } else { "" }, true);
+                    changed |= field(ui, p, "Folder", &mut ed.form.folder, "OTM", false);
+                }
+                _ => {
+                    if kind == Kind::Pcloud {
+                        ui.label(egui::RichText::new("Data region").size(12.0).color(p.muted));
+                        changed |= widgets::segmented(
+                            ui,
+                            p,
+                            &mut ed.form.region,
+                            &[("us".to_string(), "United States"), ("eu".to_string(), "Europe")],
+                            ((ui.available_width() - 8.0) / 2.0).max(90.0),
+                        );
+                        ui.add_space(6.0);
+                    }
+                    changed |= field(ui, p, "Folder", &mut ed.form.folder, "OTM (empty: top folder)", false);
+                    let signed = ed.secret_saved || !ed.secret.is_empty();
+                    ui.add_space(2.0);
+                    let mut cancel_signin = false;
+                    if let Some(si) = &ed.signin {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label(egui::RichText::new("Finish signing in in your browser…").size(12.5).color(p.muted));
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            if let Some(link) = &si.link
+                                && ui.add(egui::Label::new(egui::RichText::new("Open the sign-in page").size(12.0).color(p.accent)).sense(Sense::click())).clicked()
+                            {
+                                crate::paths::open_path(std::path::Path::new(link));
+                            }
+                            if ui.add(egui::Label::new(egui::RichText::new("Cancel").size(12.0).color(p.danger)).sense(Sense::click())).clicked() {
+                                cancel_signin = true;
+                            }
+                        });
+                    } else {
+                        ui.label(
+                            egui::RichText::new(if signed {
+                                format!("✓ Signed in to {}", kind.label())
+                            } else {
+                                format!("A {} page opens in your browser; OTM never sees your password.", kind.label())
+                            })
+                            .size(12.0)
+                            .color(if signed { p.success } else { p.muted }),
+                        );
+                        ui.add_space(4.0);
+                        let label = if signed { "Sign in again".to_string() } else { format!("Sign in with {}", kind.label()) };
+                        let ready = crate::uploads::engine_ready();
+                        if ui.add_enabled_ui(ready, |ui| {
+                            ui.set_width(ui.available_width());
+                            if signed { widgets::secondary(ui, p, &label, None) } else { widgets::primary(ui, p, &label, None) }
+                        }).inner.clicked() {
+                            ed.result = None;
+                            ed.signin = Some(SignIn::start(kind, ui.ctx().clone()));
+                        }
+                    }
+                    if cancel_signin {
+                        ed.signin = None;
+                    }
+                    ui.add_space(6.0);
                 }
             }
             if changed {

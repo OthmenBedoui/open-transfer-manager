@@ -47,11 +47,53 @@ const MEDIA_HOSTS: &[&str] = &[
     "ok.ru",
 ];
 
+/// Streaming services that lock their videos or music with DRM (Widevine, PlayReady,
+/// FairPlay). OTM does not remove DRM: these are explained instead of failing oddly.
+const DRM_SERVICES: &[(&str, &str)] = &[
+    ("netflix.com", "Netflix"),
+    ("crunchyroll.com", "Crunchyroll"),
+    ("disneyplus.com", "Disney+"),
+    ("primevideo.com", "Prime Video"),
+    ("max.com", "Max"),
+    ("hbomax.com", "Max"),
+    ("hulu.com", "Hulu"),
+    ("tv.apple.com", "Apple TV+"),
+    ("paramountplus.com", "Paramount+"),
+    ("peacocktv.com", "Peacock"),
+    ("canalplus.com", "Canal+"),
+    ("mycanal.fr", "Canal+"),
+    ("spotify.com", "Spotify"),
+    ("deezer.com", "Deezer"),
+    ("tidal.com", "Tidal"),
+    ("music.apple.com", "Apple Music"),
+    ("shahid.mbc.net", "Shahid"),
+    ("osnplus.com", "OSN+"),
+];
+
+/// The DRM-protected service a link belongs to, if any.
+pub fn drm_service(url: &str) -> Option<&'static str> {
+    let host = host_of(url);
+    let host = host.trim_start_matches("www.");
+    DRM_SERVICES
+        .iter()
+        .find(|(h, _)| host == *h || host.ends_with(&format!(".{h}")))
+        .map(|(_, name)| *name)
+}
+
+pub fn drm_message(service: &str) -> String {
+    format!(
+        "{service} protects its videos with DRM (encryption tied to its own player), so no download manager may save them. Use the Download button in the official {service} app to watch offline."
+    )
+}
+
 /// Fast guess without running yt-dlp: is this a video/audio page rather than a direct file link?
 pub fn looks_like_media_page(url: &str) -> bool {
     let host = host_of(url);
     if host.is_empty() {
         return false;
+    }
+    if drm_service(url).is_some() {
+        return true; // goes to the media path, which explains DRM instead of saving the web page
     }
     let path = url
         .split("://")
@@ -200,6 +242,9 @@ fn base_args(mgr: &Manager, headers: &[(String, String)]) -> Vec<String> {
 
 /// Ask yt-dlp about a page: title, duration, and the formats the user can pick.
 pub fn probe(mgr: &Manager, url: &str, headers: &[(String, String)]) -> Result<MediaInfo, String> {
+    if let Some(service) = drm_service(url) {
+        return Err(drm_message(service));
+    }
     Ok(info_from_json(
         &probe_json(mgr, url, headers)?,
         ffmpeg_path().is_some(),
@@ -532,6 +577,9 @@ pub fn clean_error(stderr: &str) -> String {
     } else {
         line
     };
+    if line.contains("DRM") {
+        return "This video is protected by DRM (encryption tied to the site's own player), so it can't be downloaded. Use the site's own offline download if it has one.".into();
+    }
     if line.contains("Requested format is not available") {
         return if ffmpeg_path().is_none() {
             "This video has no single-file version at this quality. Install ffmpeg (it joins video and audio) or choose another quality.".into()
@@ -561,6 +609,14 @@ pub fn run(dl: &DlRef, mgr: &Manager) {
     let (url, headers, opts, dir, stop) = {
         let d = lock(dl);
         let Kind::Media(o) = &d.kind else { return };
+        if let Some(service) = drm_service(&d.url) {
+            drop(d);
+            let mut d = lock(dl);
+            d.status = Status::Error;
+            d.error = drm_message(service);
+            d.retries_left = 0;
+            return;
+        }
         (
             d.url.clone(),
             d.headers.clone(),
@@ -867,6 +923,26 @@ mod tests {
         assert!(looks_like_media_page("https://www.tiktok.com/@a/video/1"));
         assert!(!looks_like_media_page("https://example.com/file.zip"));
         assert!(!looks_like_media_page("https://x.com/files/archive.zip"));
+        // DRM services are recognised and explained, never saved as a web page
+        assert_eq!(
+            drm_service("https://www.netflix.com/watch/81234567"),
+            Some("Netflix")
+        );
+        assert_eq!(
+            drm_service("https://www.crunchyroll.com/fr/watch/GX9U/ep"),
+            Some("Crunchyroll")
+        );
+        assert_eq!(
+            drm_service("https://open.spotify.com/track/1"),
+            Some("Spotify")
+        );
+        assert_eq!(drm_service("https://notnetflix.com/x"), None);
+        assert_eq!(drm_service("https://www.youtube.com/watch?v=a"), None);
+        assert!(looks_like_media_page(
+            "https://www.netflix.com/watch/81234567"
+        ));
+        assert!(drm_message("Netflix").contains("official Netflix app"));
+        assert!(clean_error("ERROR: [Foo] 123: This video is DRM protected").contains("DRM"));
     }
 
     #[test]

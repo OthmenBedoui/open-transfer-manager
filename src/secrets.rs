@@ -15,7 +15,7 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
     if file_only() {
         return file_set(key, Some(value));
     }
-    match native::set(key, value) {
+    match native_set(key, value) {
         Ok(()) => {
             let _ = file_set(key, None); // drop an older copy from the fallback file
             Ok(())
@@ -27,7 +27,7 @@ pub fn set(key: &str, value: &str) -> Result<(), String> {
 
 pub fn get(key: &str) -> Option<String> {
     if !file_only()
-        && let Some(v) = native::get(key)
+        && let Some(v) = native_get(key)
     {
         return Some(v);
     }
@@ -36,9 +36,64 @@ pub fn get(key: &str) -> Option<String> {
 
 pub fn delete(key: &str) {
     if !file_only() {
-        native::delete(key);
+        native_delete(key);
     }
     let _ = file_set(key, None);
+}
+
+// Windows Credential Manager holds at most 2560 bytes (1280 UTF-16 characters) per entry,
+// less than a OneDrive sign-in token: long values are split over numbered entries.
+const PART: usize = 1000;
+const PARTS_MARK: &str = "otm-parts:";
+
+fn parts_of(value: &str) -> Vec<String> {
+    let chars: Vec<char> = value.chars().collect();
+    chars.chunks(PART).map(|c| c.iter().collect()).collect()
+}
+
+fn part_count(stored: &str) -> Option<usize> {
+    stored.strip_prefix(PARTS_MARK)?.parse().ok()
+}
+
+fn native_set(key: &str, value: &str) -> Result<(), String> {
+    let old_parts = native::get(key)
+        .as_deref()
+        .and_then(part_count)
+        .unwrap_or(0);
+    let parts = parts_of(value);
+    if parts.len() <= 1 {
+        native::set(key, value)?;
+    } else {
+        for (i, p) in parts.iter().enumerate() {
+            native::set(&format!("{key}#{}", i + 1), p)?;
+        }
+        native::set(key, &format!("{PARTS_MARK}{}", parts.len()))?;
+    }
+    let kept = if parts.len() <= 1 { 0 } else { parts.len() };
+    for i in kept + 1..=old_parts {
+        native::delete(&format!("{key}#{i}"));
+    }
+    Ok(())
+}
+
+fn native_get(key: &str) -> Option<String> {
+    let v = native::get(key)?;
+    let Some(n) = part_count(&v) else {
+        return Some(v);
+    };
+    (1..=n)
+        .map(|i| native::get(&format!("{key}#{i}")))
+        .collect::<Option<Vec<String>>>()
+        .map(|p| p.concat())
+}
+
+fn native_delete(key: &str) {
+    if let Some(n) = native::get(key).as_deref().and_then(part_count) {
+        for i in 1..=n {
+            native::delete(&format!("{key}#{i}"));
+        }
+    }
+    native::delete(key);
 }
 
 /// Where secrets are stored, in words for the user.
@@ -101,7 +156,7 @@ fn file_set(key: &str, value: Option<&str>) -> Result<(), String> {
     std::fs::rename(&tmp, &path).map_err(|e| format!("Could not save the secret: {e}"))
 }
 
-fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+pub fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
@@ -262,5 +317,30 @@ mod tests {
         );
         delete("otm-selftest");
         assert_eq!(get("otm-selftest"), None);
+        // a long sign-in token is split over several entries and comes back whole
+        let long: String = (0..3500)
+            .map(|i| char::from(b'a' + (i % 26) as u8))
+            .collect();
+        set("otm-selftest-long", &long).unwrap();
+        assert_eq!(get("otm-selftest-long").as_deref(), Some(long.as_str()));
+        set("otm-selftest-long", "short now").unwrap();
+        assert_eq!(get("otm-selftest-long").as_deref(), Some("short now"));
+        assert_eq!(
+            native::get("otm-selftest-long#1"),
+            None,
+            "old parts removed"
+        );
+        delete("otm-selftest-long");
+        assert_eq!(get("otm-selftest-long"), None);
+    }
+
+    #[test]
+    fn long_values_split_on_characters() {
+        let v: String = "é".repeat(2500);
+        let parts = parts_of(&v);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.concat(), v);
+        assert_eq!(part_count("otm-parts:3"), Some(3));
+        assert_eq!(part_count("plain"), None);
     }
 }

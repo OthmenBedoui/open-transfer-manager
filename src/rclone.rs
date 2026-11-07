@@ -1,10 +1,13 @@
 //! The upload engine: rclone (MIT), run as a separate process like yt-dlp.
 //!
-//! rclone speaks SFTP, FTP, WebDAV, S3 and 70+ other storage systems. OTM gives it the
-//! destination through `RCLONE_CONFIG_OTM_*` environment variables (see `connectors`) and
-//! reads progress from its JSON log, so the user's own rclone setup is never touched.
+//! rclone speaks SFTP, FTP, WebDAV, S3, the big cloud drives and 70+ other storage
+//! systems. OTM gives it the destination through `RCLONE_CONFIG_OTM_*` environment
+//! variables, or for drives signed in through the browser a private config file that lives
+//! only while rclone runs (rclone may renew the token in it; OTM saves the new one back to
+//! the keychain). Progress comes from rclone's JSON log. The user's own rclone setup is
+//! never touched.
 
-use crate::connectors::Connector;
+use crate::connectors::{Connector, Kind};
 use crate::{paths, secrets};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -186,7 +189,65 @@ fn obscure(program: &Path, plain: &str) -> Result<String, String> {
 /// A ready-to-run rclone and the environment that defines the `otm:` remote.
 pub struct Remote {
     program: PathBuf,
+    kind: Kind,
     env: Vec<(String, String)>,
+    token_file: Option<TokenFile>,
+}
+
+/// Private config file for a drive signed in through the browser.
+struct TokenFile {
+    path: PathBuf,
+    secret_key: String,
+    original: String,
+    save_back: bool,
+}
+
+fn run_dir() -> PathBuf {
+    let d = paths::data_dir().join("run");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+/// Remove config files left by a crash (only old ones: another OTM may be uploading).
+pub fn clean_run_dir() {
+    let Ok(rd) = std::fs::read_dir(run_dir()) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > Duration::from_secs(24 * 3600));
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// The `token = ...` value of an rclone config file.
+pub fn token_in(ini: &str) -> Option<String> {
+    ini.lines()
+        .find_map(|l| l.strip_prefix("token = "))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+impl Drop for Remote {
+    fn drop(&mut self) {
+        let Some(t) = self.token_file.take() else {
+            return;
+        };
+        if t.save_back
+            && let Ok(text) = std::fs::read_to_string(&t.path)
+            && let Some(token) = token_in(&text)
+            && token != t.original
+        {
+            let _ = secrets::set(&t.secret_key, &token);
+        }
+        let _ = std::fs::remove_file(&t.path);
+    }
 }
 
 impl Remote {
@@ -199,18 +260,45 @@ impl Remote {
             None => secrets::get(&c.secret_key()),
         };
         c.validate(secret.is_some())?;
+        if c.kind.uses_browser_sign_in() {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let token = secret.unwrap_or_default();
+            let path = run_dir().join(format!(
+                "otm-{}-{}.conf",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::SeqCst)
+            ));
+            secrets::write_private(&path, &c.rclone_ini(Some(&token)))
+                .map_err(|e| format!("Could not prepare the upload: {e}"))?;
+            return Ok(Remote {
+                program,
+                kind: c.kind,
+                env: Vec::new(),
+                token_file: Some(TokenFile {
+                    path,
+                    secret_key: c.secret_key(),
+                    original: token,
+                    save_back: typed_secret.is_none() && c.id != 0,
+                }),
+            });
+        }
         let secret = match secret {
             Some(s) if c.needs_obscured_secret() => Some(obscure(&program, &s)?),
             s => s,
         };
         Ok(Remote {
             env: c.rclone_env(secret.as_deref()),
+            kind: c.kind,
             program,
+            token_file: None,
         })
     }
 
     fn command(&self) -> Command {
         let mut c = base_command(&self.program);
+        if let Some(t) = &self.token_file {
+            c.env("RCLONE_CONFIG", &t.path);
+        }
         c.envs(self.env.iter().map(|(k, v)| (k, v))).args([
             "--contimeout",
             "20s",
@@ -331,15 +419,145 @@ impl Remote {
     /// A public / shareable link, where the destination can make one (S3 presigned
     /// links, WebDAV shares on Nextcloud…). `None` when it can't.
     pub fn link(&self, remote: &str) -> Option<String> {
-        let out = self
-            .command()
-            .args(["link", "--expire", "7d"])
-            .arg(remote)
-            .output()
-            .ok()?;
+        let mut cmd = self.command();
+        cmd.arg("link");
+        if self.kind == Kind::S3 {
+            // presigned S3 links last 7 days at most; drives make links without expiry
+            cmd.args(["--expire", "7d"]);
+        }
+        let out = cmd.arg(remote).output().ok()?;
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
         (out.status.success() && s.starts_with("http")).then_some(s)
     }
+}
+
+// ------------------------------------------------------------------ browser sign-in
+
+/// Sign in to a drive on the provider's own page: `rclone authorize` opens the browser
+/// and waits on 127.0.0.1 for the answer. `on_link` gets the address to open by hand if
+/// the browser did not appear. Returns the token (JSON).
+pub fn authorize(
+    kind: Kind,
+    cancel: &AtomicBool,
+    mut on_link: impl FnMut(String),
+) -> Result<String, String> {
+    let program = path().ok_or("The upload engine (rclone) is not installed.")?;
+    let backend = kind
+        .authorize_type()
+        .ok_or("This destination does not sign in through the browser.")?;
+    let mut child = base_command(&program)
+        .args(["authorize", backend])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start rclone: {e}"))?;
+    let (tx, rx) = mpsc::channel::<(bool, String)>();
+    let pipes: [(bool, Option<Box<dyn Read + Send>>); 2] = [
+        (
+            true,
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        ),
+        (
+            false,
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        ),
+    ];
+    for (is_out, pipe) in pipes {
+        let Some(pipe) = pipe else { continue };
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                if tx.send((is_out, line)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10 * 60);
+    let mut out = String::new();
+    let mut errors = String::new();
+    loop {
+        let cancelled = cancel.load(Ordering::SeqCst);
+        if cancelled || std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(if cancelled {
+                "Sign-in cancelled.".into()
+            } else {
+                "Sign-in took too long; try again.".into()
+            });
+        }
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok((true, line)) => {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            Ok((false, line)) => {
+                if let Some(url) = sign_in_link(&line) {
+                    on_link(url);
+                }
+                errors.push_str(&line);
+                errors.push('\n');
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    match parse_authorize(&out) {
+        Some(token) if status.success() => Ok(token),
+        _ => Err(readable_error(if errors.trim().is_empty() {
+            "Sign-in did not finish."
+        } else {
+            &errors
+        })),
+    }
+}
+
+/// The local address rclone asks to open (`http://127.0.0.1:53682/auth?state=...`).
+pub fn sign_in_link(line: &str) -> Option<String> {
+    let i = line.find("http://127.0.0.1:")?;
+    let url: String = line[i..]
+        .chars()
+        .take_while(|c| !c.is_whitespace())
+        .collect();
+    url.contains("/auth").then_some(url)
+}
+
+/// The token printed by `rclone authorize` between its "paste" markers.
+pub fn parse_authorize(out: &str) -> Option<String> {
+    let start = out.find("--->")? + 4;
+    let end = start + out[start..].find("<---")?;
+    let token = out[start..end].trim();
+    let v: Value = serde_json::from_str(token).ok()?;
+    (v.get("access_token").is_some() || v.get("refresh_token").is_some())
+        .then(|| serde_json::to_string(&v).unwrap_or_else(|_| token.to_string()))
+}
+
+/// OneDrive needs to know which drive to use: ask Microsoft Graph for the account's
+/// own drive right after sign-in. Returns (drive id, drive type).
+pub fn onedrive_drive(token: &str) -> Result<(String, String), String> {
+    let v: Value = serde_json::from_str(token).map_err(|e| e.to_string())?;
+    let access = v["access_token"].as_str().ok_or("No access token")?;
+    let mut resp = ureq::get("https://graph.microsoft.com/v1.0/me/drive")
+        .header("Authorization", &format!("Bearer {access}"))
+        .call()
+        .map_err(|e| format!("Could not read your OneDrive: {e}"))?;
+    let text = resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    let d: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let id = d["id"].as_str().ok_or("OneDrive did not return a drive")?;
+    let kind = d["driveType"].as_str().unwrap_or("personal");
+    Ok((id.to_string(), kind.to_string()))
 }
 
 // ------------------------------------------------------------------ log parsing
@@ -477,6 +695,25 @@ mod tests {
         assert_eq!(
             readable_error("Failed to copy: something odd"),
             "something odd"
+        );
+    }
+
+    #[test]
+    fn sign_in_output() {
+        let out = "\nPaste the following into your remote machine --->\n{\"access_token\":\"ya29.a\",\"token_type\":\"Bearer\",\"refresh_token\":\"1//r\",\"expiry\":\"2026-11-07T22:00:00Z\"}\n<---End paste\n";
+        let t = parse_authorize(out).unwrap();
+        assert!(t.starts_with('{') && t.contains("\"refresh_token\":\"1//r\""));
+        assert!(!t.contains('\n'));
+        assert_eq!(parse_authorize("--->\nnot json\n<---End paste"), None);
+        assert_eq!(parse_authorize("nothing"), None);
+        assert_eq!(
+            sign_in_link("NOTICE: If your browser doesn't open automatically go to the following link: http://127.0.0.1:53682/auth?state=abc").as_deref(),
+            Some("http://127.0.0.1:53682/auth?state=abc")
+        );
+        assert_eq!(sign_in_link("Waiting for code..."), None);
+        assert_eq!(
+            token_in("[otm]\ntype = drive\ntoken = {\"a\":1}\nscope = drive\n").as_deref(),
+            Some("{\"a\":1}")
         );
     }
 

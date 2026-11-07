@@ -1,8 +1,11 @@
-//! Upload destinations ("connectors"): SFTP, FTP, WebDAV and S3-compatible servers.
+//! Upload destinations ("connectors"): servers (SFTP, FTP, WebDAV, S3-compatible) and
+//! cloud drives (Google Drive, OneDrive, Dropbox, MEGA, pCloud, Box).
 //!
-//! Settings are saved in `connectors.json`; the password / secret key of each one is kept
-//! in the system keychain (see `secrets`). rclone receives everything through environment
-//! variables of a remote named `otm`, so nothing secret ever appears on a command line.
+//! Settings are saved in `connectors.json`; the password, secret key or sign-in token of
+//! each one is kept in the system keychain (see `secrets`). rclone receives servers through
+//! environment variables of a remote named `otm`; drives that sign in on the provider's
+//! own page get a short-lived private config file instead, so rclone can write a renewed
+//! token back (`rclone::Remote`). Nothing secret ever appears on a command line.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +17,36 @@ pub enum Kind {
     Ftp,
     Webdav,
     S3,
+    Gdrive,
+    Onedrive,
+    Dropbox,
+    Mega,
+    Pcloud,
+    Box,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::Sftp, Kind::Ftp, Kind::Webdav, Kind::S3];
+    pub const SERVERS: [Kind; 4] = [Kind::Sftp, Kind::Ftp, Kind::Webdav, Kind::S3];
+    pub const DRIVES: [Kind; 6] = [
+        Kind::Gdrive,
+        Kind::Onedrive,
+        Kind::Dropbox,
+        Kind::Mega,
+        Kind::Pcloud,
+        Kind::Box,
+    ];
+
+    /// Signs in on the provider's own web page (OAuth); the stored secret is the token.
+    pub fn uses_browser_sign_in(self) -> bool {
+        matches!(
+            self,
+            Kind::Gdrive | Kind::Onedrive | Kind::Dropbox | Kind::Pcloud | Kind::Box
+        )
+    }
+
+    pub fn is_drive(self) -> bool {
+        Kind::DRIVES.contains(&self)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -25,6 +54,12 @@ impl Kind {
             Kind::Ftp => "FTP / FTPS",
             Kind::Webdav => "WebDAV",
             Kind::S3 => "S3-compatible",
+            Kind::Gdrive => "Google Drive",
+            Kind::Onedrive => "OneDrive",
+            Kind::Dropbox => "Dropbox",
+            Kind::Mega => "MEGA",
+            Kind::Pcloud => "pCloud",
+            Kind::Box => "Box",
         }
     }
     pub fn mono(self) -> &'static str {
@@ -33,6 +68,12 @@ impl Kind {
             Kind::Ftp => "FT",
             Kind::Webdav => "WD",
             Kind::S3 => "S3",
+            Kind::Gdrive => "GD",
+            Kind::Onedrive => "OD",
+            Kind::Dropbox => "DB",
+            Kind::Mega => "MG",
+            Kind::Pcloud => "PC",
+            Kind::Box => "BX",
         }
     }
     pub fn blurb(self) -> &'static str {
@@ -41,12 +82,19 @@ impl Kind {
             Kind::Ftp => "Classic hosting and NAS boxes.",
             Kind::Webdav => "Nextcloud, ownCloud, NAS.",
             Kind::S3 => "AWS, Backblaze B2, R2, MinIO, Wasabi.",
+            Kind::Gdrive => "Upload and create share links.",
+            Kind::Onedrive => "Personal and work accounts.",
+            Kind::Dropbox => "Upload and create share links.",
+            Kind::Mega => "End-to-end encrypted storage.",
+            Kind::Pcloud => "EU or US data region.",
+            Kind::Box => "Work and personal accounts.",
         }
     }
     pub fn secret_label(self) -> &'static str {
         match self {
             Kind::S3 => "Secret key",
             Kind::Webdav => "Password or app password",
+            k if k.uses_browser_sign_in() => "Sign-in token",
             _ => "Password",
         }
     }
@@ -56,7 +104,17 @@ impl Kind {
             Kind::Ftp => "ftp",
             Kind::Webdav => "webdav",
             Kind::S3 => "s3",
+            Kind::Gdrive => "drive",
+            Kind::Onedrive => "onedrive",
+            Kind::Dropbox => "dropbox",
+            Kind::Mega => "mega",
+            Kind::Pcloud => "pcloud",
+            Kind::Box => "box",
         }
+    }
+    /// Backend name for `rclone authorize`.
+    pub fn authorize_type(self) -> Option<&'static str> {
+        self.uses_browser_sign_in().then(|| self.rclone_type())
     }
     pub fn default_port(self) -> Option<u16> {
         match self {
@@ -88,6 +146,7 @@ pub struct Connector {
     /// SFTP / FTP
     pub host: String,
     pub port: Option<u16>,
+    /// User name (servers) or account email (MEGA).
     pub user: String,
     /// Remote folder files are sent to. For S3: `bucket/optional/prefix`.
     pub folder: String,
@@ -95,17 +154,21 @@ pub struct Connector {
     pub url: String,
     /// WebDAV server flavour: nextcloud, owncloud or other.
     pub vendor: String,
-    /// S3
+    /// S3 endpoint.
     pub endpoint: String,
+    /// S3 region; pCloud data region (`us` or `eu`).
     pub region: String,
     pub access_key: String,
     /// FTP over TLS (explicit FTPS).
     pub tls: bool,
     pub auth: SftpAuth,
     pub key_file: String,
+    /// OneDrive: the drive files go to (found after sign-in).
+    pub drive_id: String,
+    pub drive_type: String,
 }
 
-/// Name rclone knows our remote by (configured through `RCLONE_CONFIG_OTM_*`).
+/// Name rclone knows our remote by.
 pub const REMOTE: &str = "otm";
 
 impl Connector {
@@ -115,6 +178,16 @@ impl Connector {
             port: kind.default_port(),
             vendor: if kind == Kind::Webdav {
                 "other".into()
+            } else {
+                String::new()
+            },
+            region: if kind == Kind::Pcloud {
+                "us".into()
+            } else {
+                String::new()
+            },
+            folder: if kind.is_drive() {
+                "OTM".into()
             } else {
                 String::new()
             },
@@ -134,6 +207,8 @@ impl Connector {
             Kind::Ftp => !self.user.trim().is_empty() && self.user.trim() != "anonymous",
             Kind::Webdav => !self.user.trim().is_empty(),
             Kind::S3 => !self.access_key.trim().is_empty(),
+            // MEGA needs its password, the others their sign-in token
+            _ => true,
         }
     }
 
@@ -179,6 +254,15 @@ impl Connector {
                     format!("{host} · {}", folder.trim_matches('/'))
                 }
             }
+            k => {
+                let account = self.user.trim();
+                let place = if k == Kind::Mega && !account.is_empty() {
+                    account
+                } else {
+                    k.label()
+                };
+                format!("{place} · /{}", folder.trim_matches('/'))
+            }
         }
     }
 
@@ -215,17 +299,51 @@ impl Connector {
                 need(&self.folder, "Bucket")?;
                 need(&self.access_key, "Access key")?;
             }
+            Kind::Mega => need(&self.user, "Email")?,
+            _ => {}
         }
         if self.secret_required() && !has_secret {
+            if self.kind.uses_browser_sign_in() {
+                return Err(format!("Sign in to {} first.", self.kind.label()));
+            }
             return Err(format!("{} is required.", self.kind.secret_label()));
         }
         Ok(())
     }
 
-    /// Settings for rclone's `otm` remote. `secret` is what the user typed, already
-    /// obscured with `rclone obscure` for backends that expect it (`needs_obscured_secret`).
+    /// Settings for rclone's `otm` remote as environment variables (servers, MEGA).
     pub fn rclone_env(&self, secret: Option<&str>) -> Vec<(String, String)> {
-        let mut v: Vec<(&str, String)> = vec![("TYPE", self.kind.rclone_type().into())];
+        self.rclone_options(secret)
+            .into_iter()
+            .map(|(k, val)| {
+                (
+                    format!(
+                        "RCLONE_CONFIG_{}_{}",
+                        REMOTE.to_uppercase(),
+                        k.to_uppercase()
+                    ),
+                    val,
+                )
+            })
+            .collect()
+    }
+
+    /// The same settings as an rclone config file (drives with sign-in tokens, so
+    /// rclone can write a renewed token back).
+    pub fn rclone_ini(&self, secret: Option<&str>) -> String {
+        let mut s = format!("[{REMOTE}]\n");
+        for (k, v) in self.rclone_options(secret) {
+            // values stay on one line: never let one start another setting or section
+            let v = v.replace(['\r', '\n'], "");
+            s += &format!("{k} = {v}\n");
+        }
+        s
+    }
+
+    /// Settings for rclone's `otm` remote. `secret` is the password (already obscured
+    /// with `rclone obscure` where `needs_obscured_secret`), S3 secret key or sign-in token.
+    fn rclone_options(&self, secret: Option<&str>) -> Vec<(&'static str, String)> {
+        let mut v: Vec<(&'static str, String)> = vec![("type", self.kind.rclone_type().into())];
         let secret = secret.filter(|s| !s.is_empty());
         let port = self
             .port
@@ -233,21 +351,21 @@ impl Connector {
             .map(|p| p.to_string());
         match self.kind {
             Kind::Sftp => {
-                v.push(("HOST", self.host.trim().into()));
-                v.push(("USER", self.user.trim().into()));
+                v.push(("host", self.host.trim().into()));
+                v.push(("user", self.user.trim().into()));
                 if let Some(p) = port {
-                    v.push(("PORT", p));
+                    v.push(("port", p));
                 }
                 match self.auth {
                     SftpAuth::Password => {
                         if let Some(s) = secret {
-                            v.push(("PASS", s.into()));
+                            v.push(("pass", s.into()));
                         }
                     }
                     SftpAuth::KeyFile => {
-                        v.push(("KEY_FILE", expand_home(self.key_file.trim())));
+                        v.push(("key_file", expand_home(self.key_file.trim())));
                         if let Some(s) = secret {
-                            v.push(("KEY_FILE_PASS", s.into()));
+                            v.push(("key_file_pass", s.into()));
                         }
                     }
                     // with no password and no key file rclone asks the ssh-agent
@@ -255,40 +373,40 @@ impl Connector {
                 }
             }
             Kind::Ftp => {
-                v.push(("HOST", self.host.trim().into()));
+                v.push(("host", self.host.trim().into()));
                 let user = self.user.trim();
                 v.push((
-                    "USER",
+                    "user",
                     if user.is_empty() { "anonymous" } else { user }.into(),
                 ));
                 if let Some(p) = port {
-                    v.push(("PORT", p));
+                    v.push(("port", p));
                 }
                 if let Some(s) = secret {
-                    v.push(("PASS", s.into()));
+                    v.push(("pass", s.into()));
                 }
                 if self.tls {
-                    v.push(("EXPLICIT_TLS", "true".into()));
+                    v.push(("explicit_tls", "true".into()));
                 }
             }
             Kind::Webdav => {
-                v.push(("URL", self.url.trim().trim_end_matches('/').into()));
+                v.push(("url", self.url.trim().trim_end_matches('/').into()));
                 let vendor = match self.vendor.as_str() {
                     "nextcloud" | "owncloud" | "sharepoint" => self.vendor.clone(),
                     _ => "other".into(),
                 };
-                v.push(("VENDOR", vendor));
+                v.push(("vendor", vendor));
                 if !self.user.trim().is_empty() {
-                    v.push(("USER", self.user.trim().into()));
+                    v.push(("user", self.user.trim().into()));
                 }
                 if let Some(s) = secret {
-                    v.push(("PASS", s.into()));
+                    v.push(("pass", s.into()));
                 }
             }
             Kind::S3 => {
                 let endpoint = self.endpoint.trim();
                 v.push((
-                    "PROVIDER",
+                    "provider",
                     if endpoint.is_empty() || endpoint.contains("amazonaws.com") {
                         "AWS"
                     } else {
@@ -296,29 +414,60 @@ impl Connector {
                     }
                     .into(),
                 ));
-                v.push(("ENV_AUTH", "false".into()));
-                v.push(("ACCESS_KEY_ID", self.access_key.trim().into()));
+                v.push(("env_auth", "false".into()));
+                v.push(("access_key_id", self.access_key.trim().into()));
                 if let Some(s) = secret {
-                    v.push(("SECRET_ACCESS_KEY", s.into()));
+                    v.push(("secret_access_key", s.into()));
                 }
                 if !endpoint.is_empty() {
-                    v.push(("ENDPOINT", endpoint.into()));
+                    v.push(("endpoint", endpoint.into()));
                 }
                 if !self.region.trim().is_empty() {
-                    v.push(("REGION", self.region.trim().into()));
+                    v.push(("region", self.region.trim().into()));
                 }
                 // buckets usually exist already and keys are often scoped to one bucket
-                v.push(("NO_CHECK_BUCKET", "true".into()));
+                v.push(("no_check_bucket", "true".into()));
+            }
+            Kind::Mega => {
+                v.push(("user", self.user.trim().into()));
+                if let Some(s) = secret {
+                    v.push(("pass", s.into()));
+                }
+            }
+            Kind::Gdrive | Kind::Onedrive | Kind::Dropbox | Kind::Pcloud | Kind::Box => {
+                if let Some(s) = secret {
+                    v.push(("token", s.into()));
+                }
+                match self.kind {
+                    Kind::Gdrive => v.push(("scope", "drive".into())),
+                    Kind::Onedrive if !self.drive_id.is_empty() => {
+                        v.push(("drive_id", self.drive_id.clone()));
+                        let t = if self.drive_type.is_empty() {
+                            "personal"
+                        } else {
+                            &self.drive_type
+                        };
+                        v.push(("drive_type", t.into()));
+                    }
+                    Kind::Pcloud => {
+                        let host = if self.region == "eu" {
+                            "eapi.pcloud.com"
+                        } else {
+                            "api.pcloud.com"
+                        };
+                        v.push(("hostname", host.into()));
+                    }
+                    _ => {}
+                }
             }
         }
-        v.into_iter()
-            .map(|(k, val)| (format!("RCLONE_CONFIG_{}_{k}", REMOTE.to_uppercase()), val))
-            .collect()
+        v
     }
 
-    /// rclone stores most passwords "obscured"; S3 secret keys are passed as they are.
+    /// rclone stores passwords "obscured"; S3 secret keys and sign-in tokens are passed
+    /// as they are.
     pub fn needs_obscured_secret(&self) -> bool {
-        self.kind != Kind::S3
+        self.kind != Kind::S3 && !self.kind.uses_browser_sign_in()
     }
 
     /// `otm:folder` (the destination folder on the remote).
@@ -398,6 +547,45 @@ mod tests {
             c.address(),
             "s3.eu-central-003.backblazeb2.com · otm-releases/builds"
         );
+    }
+
+    #[test]
+    fn drives_get_a_config_file_with_their_token() {
+        let mut c = Connector::new(Kind::Onedrive);
+        assert_eq!(c.folder, "OTM", "drives send to an OTM folder by default");
+        assert_eq!(c.validate(false).unwrap_err(), "Sign in to OneDrive first.");
+        assert!(c.validate(true).is_ok());
+        assert!(!c.needs_obscured_secret());
+        c.drive_id = "b!abc".into();
+        c.drive_type = "business".into();
+        let ini = c.rclone_ini(Some("{\"access_token\":\"x\"}\n[evil]\ntype = local"));
+        assert!(ini.starts_with("[otm]\ntype = onedrive\n"));
+        assert!(ini.contains("token = {\"access_token\":\"x\"}[evil]type = local\n"));
+        assert_eq!(ini.matches('[').count(), 2, "no injected section: {ini}");
+        assert!(ini.contains("drive_id = b!abc\ndrive_type = business\n"));
+        assert_eq!(c.address(), "OneDrive · /OTM");
+
+        let mut p = Connector::new(Kind::Pcloud);
+        p.region = "eu".into();
+        assert!(
+            p.rclone_ini(Some("t"))
+                .contains("hostname = eapi.pcloud.com")
+        );
+        assert_eq!(Kind::Gdrive.authorize_type(), Some("drive"));
+        assert_eq!(Kind::Mega.authorize_type(), None);
+    }
+
+    #[test]
+    fn mega_signs_in_with_email_and_password() {
+        let mut m = Connector::new(Kind::Mega);
+        assert_eq!(m.validate(true).unwrap_err(), "Email is required.");
+        m.user = "me@example.com".into();
+        assert_eq!(m.validate(false).unwrap_err(), "Password is required.");
+        assert!(m.needs_obscured_secret());
+        let e = env_of(&m, Some("obscured"));
+        assert_eq!(e["TYPE"], "mega");
+        assert_eq!(e["USER"], "me@example.com");
+        assert_eq!(m.address(), "me@example.com · /OTM");
     }
 
     #[test]
