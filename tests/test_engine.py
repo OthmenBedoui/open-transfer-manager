@@ -39,6 +39,7 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(engine.probe(self.base + "/named/x")["name"], "report final.pdf")
 
     def test_multi_connection(self):
+        SLOW["on"] = True  # a local server is too fast to see the parallel connections
         dl = self.mgr.add(self.base + "/files/archive.zip", "archive.zip", self.tmp, "Compressed")
         peak = 0
         while dl.running():

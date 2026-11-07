@@ -91,7 +91,7 @@ VENV="$DATA/venv"
 if [ "$UNINSTALL" = 1 ]; then
   step "Removing $APP_NAME"
   if [ -x "$VENV/bin/otm" ]; then "$VENV/bin/otm" unregister-browsers >/dev/null 2>&1 || true; fi
-  rm -rf "$VENV" "$DATA/bin"
+  rm -rf "${VENV:?}" "${DATA:?}/bin"
   rm -f "$BIN/otm"
   if [ "$OS" = Linux ]; then
     rm -f "$APPS/$APP_ID.desktop" "$ICONS/$APP_ID.png"
@@ -274,6 +274,6 @@ echo "  Check everything:                             otm doctor"
 echo "  Browser extension:  https://github.com/$REPO#browser-extension"
 case ":$PATH:" in
   *":$BIN:"*) ;;
-  *) printf '\n  %sNote:%s %s is not in your PATH. Add this line to your shell profile:\n    export PATH="%s:$PATH"\n' "$Y" "$N" "$BIN" "$BIN" ;;
+  *) printf "\n  %sNote:%s %s is not in your PATH. Add this line to your shell profile:\n    export PATH=\"%s:\$PATH\"\n" "$Y" "$N" "$BIN" "$BIN" ;;
 esac
 echo

@@ -108,7 +108,8 @@ class BrowsersTest(unittest.TestCase):
         os.environ["HOME"] = home
         os.environ.pop("XDG_CONFIG_HOME", None)
         try:
-            os.makedirs(os.path.join(home, ".mozilla", "firefox"))
+            firefox_root = [root for name, _f, root, _d in browsers._targets() if name == "Firefox"][0]
+            os.makedirs(firefox_root)  # pretend Firefox is installed (path differs on Linux/macOS)
             done = browsers.register()
             names = [n for n, _p in done]
             self.assertIn("Firefox", names)
