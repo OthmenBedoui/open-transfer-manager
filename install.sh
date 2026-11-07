@@ -258,7 +258,11 @@ fi
 
 # ------------------------------------------------------------------ yt-dlp and browsers
 step "Video engine (yt-dlp)"
-"$BIN" update-ytdlp >/dev/null 2>&1 && ok "yt-dlp ready" || warn "yt-dlp not installed now; run later: otm update-ytdlp"
+if "$BIN" update-ytdlp >/dev/null 2>&1; then
+  ok "yt-dlp ready"
+else
+  warn "yt-dlp not installed now; run later: otm update-ytdlp"
+fi
 
 if [ "$BROWSERS" = 1 ]; then
   step "Browser extension bridge"
