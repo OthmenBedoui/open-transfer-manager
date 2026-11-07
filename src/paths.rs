@@ -8,13 +8,17 @@ pub const APP_ID: &str = "open-transfer-manager";
 
 /// Background tools must never create a console on Windows, including debug builds.
 pub fn background_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new(program);
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (keeps native messaging pipes)
+        cmd
     }
-    cmd
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
 }
 
 pub fn home() -> PathBuf {
