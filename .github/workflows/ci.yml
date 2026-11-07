@@ -10,31 +10,70 @@ permissions:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            sftp_server: 'C:\Program Files\Git\usr\lib\ssh\sftp-server.exe'
-          - os: ubuntu-latest
-            sftp_server: /usr/lib/openssh/sftp-server
-          - os: macos-latest
-            sftp_server: /usr/libexec/sftp-server
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Test
-        run: cargo test --release
-      - name: Test against OpenSSH's sftp-server
-        run: cargo test --release --test openssh_sftp -- --ignored --test-threads=1
-        env:
-          OTM_SFTP_SERVER: ${{ matrix.sftp_server }}
-      - name: Build
-        run: cargo build --release --bin otm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: otm-${{ matrix.os }}
-          path: |
-            target/release/otm
-            target/release/otm.exe
-          if-no-files-found: error
+          python-version: ${{ matrix.python }}
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests scripts
+      - name: Tests (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s tests -v
+      - name: Tests (macOS)
+        if: runner.os == 'macOS'
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke test
+        run: |
+          otm --version
+          otm doctor
+
+  installer:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh scripts/make_icons.sh
+      - name: Python with Tk (macOS)
+        if: runner.os == 'macOS'
+        run: brew install python-tk || true
+      - name: Tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk python3-venv
+      - name: Install from this checkout
+        run: bash install.sh --local . --yes --no-ffmpeg
+      - name: Installed app works
+        run: |
+          ~/.local/bin/otm --version
+          ~/.local/bin/otm doctor
+      - name: Uninstall
+        run: bash install.sh --uninstall --purge
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python scripts/build_extension.py
+      - name: Lint Firefox build
+        run: npx --yes web-ext@8 lint --source-dir dist/extension/firefox --warnings-as-errors=false

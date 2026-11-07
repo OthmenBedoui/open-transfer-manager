@@ -1,3 +1,13 @@
-target/
-*.part
-*.part.journal
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.ruff_cache/
+*.otmpart
+# never commit signing keys
+*.pem
+*.key
+*.crx

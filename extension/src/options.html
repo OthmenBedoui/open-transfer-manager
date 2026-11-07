@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Open Transfer Manager – Settings</title>
+  <link rel="stylesheet" href="theme.css">
+  <style>
+    main { max-width: 640px; margin: 32px auto; padding: 0 20px; }
+    h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; margin: 0 0 20px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 14px; margin: 0 0 12px; }
+    .line { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; }
+    .line + .line { border-top: 1px solid var(--border); }
+    .hint { font-size: 12px; color: var(--muted); }
+    textarea { width: 100%; min-height: 70px; resize: vertical; }
+    #saved { transition: opacity .3s; }
+  </style>
+</head>
+<body>
+<main>
+  <h1><img src="icons/48.png" width="32" height="32" alt=""> Open Transfer Manager</h1>
+
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="line">
+      <div><div id="conn">Checking…</div><div class="hint" id="conn-hint"></div></div>
+      <button id="test">Test again</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Capture downloads</h2>
+    <div class="line">
+      <div>Send browser downloads to the app<div class="hint">When off, the browser downloads files itself.</div></div>
+      <label class="switch"><input type="checkbox" id="enabled"><span></span></label>
+    </div>
+    <div class="line">
+      <div>Capture every file type<div class="hint">Otherwise only the types listed below.</div></div>
+      <label class="switch"><input type="checkbox" id="allTypes"><span></span></label>
+    </div>
+    <div style="padding-top:8px">
+      <div>File types to capture</div>
+      <textarea id="captureExts" spellcheck="false"></textarea>
+    </div>
+    <div class="line">
+      <div>Minimum size (MB)<div class="hint">Smaller files stay in the browser. 0 = no minimum.</div></div>
+      <input type="number" id="minSizeMB" min="0" step="1" style="width:90px">
+    </div>
+    <div style="padding-top:8px">
+      <div>Never capture from these sites (one per line)</div>
+      <textarea id="excludedSites" spellcheck="false" placeholder="example.com"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Video</h2>
+    <div class="line">
+      <div>Default quality for “Download video”</div>
+      <select id="defaultQuality">
+        <option value="best">Best available</option>
+        <option value="2160">4K (2160p)</option>
+        <option value="1080">1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+        <option value="audio">Audio only</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card" id="perm-card" hidden>
+    <h2>Site access</h2>
+    <div class="line">
+      <div>Allow access to sites<div class="hint">Needed to pass your login cookies, so protected downloads work.</div></div>
+      <button id="grant" class="accent">Allow</button>
+    </div>
+  </div>
+
+  <p class="hint"><span id="saved" style="opacity:0">Saved ✓</span></p>
+</main>
+<script src="common.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

@@ -1,1 +1,6 @@
+# Keep LF line endings in the repository (install.sh must run on Linux/macOS as served by GitHub).
 * text=auto eol=lf
+*.png binary
+*.webp binary
+*.ico binary
+*.icns binary

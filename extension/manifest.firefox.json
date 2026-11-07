@@ -1,0 +1,11 @@
+{
+  "background": {
+    "scripts": ["common.js", "background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "otm@opentransfermanager.org",
+      "strict_min_version": "115.0"
+    }
+  }
+}
