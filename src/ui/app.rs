@@ -838,7 +838,9 @@ impl OtmApp {
         }
         if resp.double_clicked() {
             if complete {
-                paths::open_path(&path);
+                if let Some(msg) = open_file(&path) {
+                    self_toast(&mut self.toast, &msg);
+                }
             } else if !running {
                 self.mgr.start(dl);
             }
@@ -846,7 +848,9 @@ impl OtmApp {
         resp.context_menu(|ui| {
             self.selected = Some(id);
             if complete && ui.button("Open").clicked() {
-                paths::open_path(&path);
+                if let Some(msg) = open_file(&path) {
+                    self_toast(&mut self.toast, &msg);
+                }
                 ui.close();
             }
             if ui.button("Show in folder").clicked() {
@@ -935,7 +939,9 @@ impl OtmApp {
                     };
                     if widgets::secondary(ui, p, label, Some(icon)).clicked() {
                         if complete {
-                            paths::open_path(&path);
+                            if let Some(msg) = open_file(&path) {
+                                self_toast(&mut self.toast, &msg);
+                            }
                         } else if running {
                             self.mgr.stop(&dl);
                         } else {
@@ -1077,6 +1083,23 @@ impl OtmApp {
 }
 
 static YTDLP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Open a finished file. When it is gone (moved or deleted outside OTM), open its folder
+/// instead and return a message for the user, rather than silently doing nothing.
+fn open_file(path: &std::path::Path) -> Option<String> {
+    if path.is_file() {
+        paths::open_path(path);
+        return None;
+    }
+    paths::reveal(path);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some(format!(
+        "File not found: {name}. It was moved or deleted — use “Download again” to get it back."
+    ))
+}
 
 fn self_toast(t: &mut Option<(String, Instant)>, s: &str) {
     *t = Some((s.to_string(), Instant::now()));

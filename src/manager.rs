@@ -468,6 +468,7 @@ impl Manager {
         let Some(dl) = self.find(id) else { return };
         self.stop(&dl);
         lock(&self.inner.downloads).retain(|d| !Arc::ptr_eq(d, &dl));
+        let mgr = self.clone();
         std::thread::spawn(move || {
             for _ in 0..300 {
                 if !lock(&dl).rt.running {
@@ -477,7 +478,10 @@ impl Manager {
             }
             let d = lock(&dl);
             let mut files = d.leftover_files();
-            if delete_file && d.status == Status::Complete {
+            // Never delete a file that another entry of the list still points to
+            // (the same video downloaded twice gives two entries for one file).
+            let shared = mgr.list().iter().any(|o| lock(o).path() == d.path());
+            if delete_file && d.status == Status::Complete && !shared {
                 files.push(d.path());
             }
             for f in files {
@@ -650,5 +654,44 @@ fn write_json<T: Serialize>(path: &Path, value: &T) {
             let _ = std::fs::copy(path, path.with_extension("json.bak"));
         }
         let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removing_a_duplicate_keeps_the_file_the_other_entry_uses() {
+        let dir = std::env::temp_dir().join(format!("otm-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("AURORA - Runaway [d_HlPboLRL8] 320k.mp3");
+        std::fs::write(&file, b"audio").unwrap();
+        let mgr = Manager::new(false);
+        let add = || {
+            let d = mgr.add_http(
+                "https://example.com/a.mp3",
+                "AURORA - Runaway [d_HlPboLRL8] 320k.mp3",
+                &dir,
+                "Music",
+                false,
+                false,
+                vec![],
+            );
+            lock(&d).status = Status::Complete;
+            lock(&d).id
+        };
+        let (first, second) = (add(), add());
+        let wait = || std::thread::sleep(Duration::from_millis(400));
+        mgr.remove(first, true);
+        wait();
+        assert!(file.exists(), "the other entry still uses this file");
+        mgr.remove(second, true);
+        wait();
+        assert!(
+            !file.exists(),
+            "last entry removed with delete_file: file deleted"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

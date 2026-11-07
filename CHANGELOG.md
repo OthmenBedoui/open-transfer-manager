@@ -1,5 +1,14 @@
 # Historique
 
+## 0.2.7 — ouvrir le fichier et son dossier
+
+- « Show in folder » ouvre enfin le bon dossier sous Windows et sélectionne le fichier
+  (avant : l'Explorateur ouvrait Documents dès que le chemin contenait des espaces).
+- Double-clic / Open sur un fichier déplacé ou supprimé : message clair et ouverture de son dossier,
+  au lieu de ne rien faire.
+- Retirer un doublon avec « supprimer le fichier » ne supprime plus un fichier encore utilisé
+  par une autre ligne de la liste.
+
 ## 0.2.6 — sites de confiance
 
 - Case « Toujours autoriser les téléchargements depuis ce site » dans la confirmation des liens du navigateur.

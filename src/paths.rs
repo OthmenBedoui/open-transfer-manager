@@ -71,14 +71,27 @@ pub fn open_path(path: &Path) {
 }
 
 /// Show a file selected in the file manager (or open its folder).
+/// Explorer argument that opens the file's folder with the file selected.
+/// Only the path may be quoted: `"/select,C:\a b\c.mp3"` (what `Command::arg` produces
+/// for a path with spaces) makes Explorer open the Documents folder instead.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn explorer_select_arg(path: &Path) -> String {
+    format!(
+        "/select,\"{}\"",
+        path.display().to_string().replace('/', "\\")
+    )
+}
+
 pub fn reveal(path: &Path) {
-    if path.exists() {
+    if path.is_file() {
         if cfg!(target_os = "macos") {
             spawn(Command::new("open").arg("-R").arg(path));
             return;
         }
-        if cfg!(windows) {
-            spawn(Command::new("explorer").arg(format!("/select,{}", path.display())));
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            spawn(Command::new("explorer").raw_arg(explorer_select_arg(path)));
             return;
         }
     }
@@ -127,4 +140,23 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
         candidates.push(Path::new(extra).join(&exe));
     }
     candidates.into_iter().find(|p| p.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explorer_gets_the_path_quoted_alone() {
+        let p = Path::new(r"C:\Users\x\Downloads\Music\AURORA - Runaway [d_HlPboLRL8] 320k.mp3");
+        assert_eq!(
+            explorer_select_arg(p),
+            r#"/select,"C:\Users\x\Downloads\Music\AURORA - Runaway [d_HlPboLRL8] 320k.mp3""#
+        );
+        // forward slashes from tools are turned into Windows separators
+        assert_eq!(
+            explorer_select_arg(Path::new("C:/a b/c.zip")),
+            r#"/select,"C:\a b\c.zip""#
+        );
+    }
 }

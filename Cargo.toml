@@ -1,6 +1,6 @@
 [package]
 name = "otm"
-version = "0.2.6"
+version = "0.2.7"
 default-run = "otm"
 edition = "2024"
 

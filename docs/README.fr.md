@@ -15,7 +15,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps
 ```
 
 La commande lance les tests, compile en release, prépare les extensions et produit
-`dist/windows/OTM-Setup-0.2.6.exe`, puis ouvre son assistant d’installation.
+`dist/windows/OTM-Setup-0.2.7.exe`, puis ouvre son assistant d’installation.
 Ajouter `-BuildOnly` pour produire le setup sans l’installer, ou `-IsccPath ...` pour
 indiquer le compilateur Inno Setup. Les utilisateurs finaux exécutent seulement le setup :
 ni Rust, ni Python, ni terminal ne sont requis.
