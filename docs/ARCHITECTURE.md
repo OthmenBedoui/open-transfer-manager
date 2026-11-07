@@ -37,8 +37,10 @@ L’installateur est distinct du lancement quotidien : il prépare les raccourci
 la désinstallation, les bundles d’extensions et l’enregistrement du pont. Les caches de
 compilation et paquets générés sont ignorés par Git.
 
-L’option musicale dorée est un choix explicite (`MediaOpts.music_enriched`). Sa présence
-dans les formats exige des données source complètes et ffmpeg. `music.rs` valide la
+La pochette et les paroles dépendent du réglage `Settings.music_tags` (désactivé par
+défaut) : sans lui, `music.rs` n’est jamais appelé et aucun service tiers n’est contacté.
+Activé, il s’applique à tout MP3 individuel (`media::wants_music_tags`) ; `MediaOpts.music_enriched`
+enregistre seulement le résultat (affichage doré). L’option exige ffmpeg. `music.rs` valide la
 pochette, limite sa taille et ses dimensions, puis écrit les métadonnées sur une copie
 du MP3 avant remplacement. Le navigateur traite le clic sur cette option comme une
 confirmation ; les autres demandes passent toujours par le dialogue existant.

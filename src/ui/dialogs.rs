@@ -634,7 +634,7 @@ impl AddDialog {
             let have_ffmpeg = media::ffmpeg_path().is_some();
             ui.horizontal(|ui| {
                 for (kbps, label, note) in [
-                    (320u32, "High", "320 kbps + tags auto"),
+                    (320u32, "High", "320 kbps"),
                     (192, "Standard", "192 kbps"),
                     (128, "Small", "128 kbps"),
                 ] {
@@ -1298,6 +1298,14 @@ impl SettingsDialog {
             "Download whole playlists by default",
             "",
             &mut self.s.media.playlist,
+        );
+        ui.separator();
+        widgets::switch_row(
+            ui,
+            p,
+            "Add cover art and lyrics to MP3 files",
+            "Sends title and artist to LRCLIB and MusicBrainz. Single songs only.",
+            &mut self.s.music_tags,
         );
     }
 

@@ -75,6 +75,12 @@ pour contourner cette interruption.
 - Ce test a lieu sur la machine de développement, pas dans une VM vierge ; les extensions
   n’ont pas été publiées ni installées dans les profils personnels des navigateurs.
 
+## Version 0.2.5 : pochette et paroles en option
+
+- L'enrichissement n'est plus automatique : réglage « Add cover art and lyrics to MP3 files »,
+  désactivé par défaut. Désactivé, aucune requête n'est envoyée à LRCLIB ni à MusicBrainz.
+- Activé, il fonctionne pour toutes les qualités MP3 (320, 192 et 128 kb/s), pas seulement High.
+
 ## Version 0.2.4 : High Audio enrichi
 
 - Le MP3 High 320 kb/s individuel déclenche la recherche LRCLIB, puis MusicBrainz / Cover Art Archive.

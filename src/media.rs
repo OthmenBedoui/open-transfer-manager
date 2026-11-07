@@ -389,11 +389,7 @@ pub fn build_choices(formats: &[Value], duration: Option<f64>, have_ffmpeg: bool
     // audio: MP3 at three qualities (size = bitrate x duration), then the original stream
     if have_ffmpeg {
         for (kbps, label, note) in [
-            (
-                320u32,
-                "MP3 · High",
-                "320 kbps · pochette et paroles si disponibles",
-            ),
+            (320u32, "MP3 · High", "320 kbps · best sound"),
             (192, "MP3 · Standard", "192 kbps · recommended"),
             (128, "MP3 · Small", "128 kbps · smallest file"),
         ] {
@@ -511,10 +507,12 @@ pub fn quality_tag(o: &MediaOpts, have_ffmpeg: bool) -> String {
     }
 }
 
-pub fn enrich_high_audio(o: &MediaOpts) -> bool {
-    o.quality == "audio"
+/// Cover art + lyrics are added only when the user enabled them in Settings,
+/// for a single MP3 at any quality (not playlists, not exact format ids).
+pub fn wants_music_tags(o: &MediaOpts, enabled: bool) -> bool {
+    enabled
+        && o.quality == "audio"
         && o.audio_format == "mp3"
-        && o.audio_kbps == 320
         && !o.playlist
         && o.format_id.is_none()
 }
@@ -680,7 +678,10 @@ pub fn run(dl: &DlRef, mgr: &Manager) {
     }
     let mut enrichment_note = String::new();
     let mut enriched = false;
-    if status.as_ref().is_some_and(|s| s.success()) && have_ffmpeg && enrich_high_audio(&opts) {
+    if status.as_ref().is_some_and(|s| s.success())
+        && have_ffmpeg
+        && wants_music_tags(&opts, mgr.settings().music_tags)
+    {
         lock(dl).phase = "Recherche de la pochette et des paroles".into();
         mgr.repaint();
         enrichment_note = "Pochette / paroles introuvables".into();
@@ -831,29 +832,30 @@ fn handle_line(dl: &DlRef, line: &str, finals: &mut Vec<PathBuf>) {
 mod tests {
     use super::*;
     #[test]
-    fn enrichment_is_exclusive_to_high_mp3() {
+    fn music_tags_are_opt_in_and_work_for_every_mp3_quality() {
         let mut opts = MediaOpts {
             quality: "audio".into(),
             audio_kbps: 320,
             ..MediaOpts::default()
         };
-        assert!(enrich_high_audio(&opts));
-        for kbps in [128, 192] {
+        // off by default: never contacts third-party services
+        assert!(!crate::model::Settings::default().music_tags);
+        assert!(!wants_music_tags(&opts, false));
+        for kbps in [320, 192, 128] {
             opts.audio_kbps = kbps;
-            assert!(!enrich_high_audio(&opts));
+            assert!(wants_music_tags(&opts, true), "{kbps} kbps");
         }
-        opts.audio_kbps = 320;
         opts.quality = "best".into();
-        assert!(!enrich_high_audio(&opts));
+        assert!(!wants_music_tags(&opts, true));
         opts.quality = "audio".into();
         opts.audio_format = "original".into();
-        assert!(!enrich_high_audio(&opts));
+        assert!(!wants_music_tags(&opts, true));
         opts.audio_format = "mp3".into();
         opts.playlist = true;
-        assert!(!enrich_high_audio(&opts));
+        assert!(!wants_music_tags(&opts, true));
         opts.playlist = false;
         opts.format_id = Some("140".into());
-        assert!(!enrich_high_audio(&opts));
+        assert!(!wants_music_tags(&opts, true));
     }
 
     use serde_json::json;

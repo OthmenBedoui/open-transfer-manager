@@ -476,6 +476,9 @@ pub struct Settings {
     pub cookies_browser: String,
     pub start_minimized: bool,
     pub clipboard_watch: bool,
+    /// Add cover art and lyrics to MP3 files (asks LRCLIB, MusicBrainz and Cover Art Archive).
+    /// Off by default: it contacts third-party services, so the user turns it on.
+    pub music_tags: bool,
 }
 
 impl Default for Settings {
@@ -506,6 +509,7 @@ impl Default for Settings {
             cookies_browser: String::new(),
             start_minimized: false,
             clipboard_watch: false,
+            music_tags: false,
         }
     }
 }

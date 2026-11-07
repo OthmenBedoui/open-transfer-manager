@@ -15,7 +15,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps
 ```
 
 La commande lance les tests, compile en release, prépare les extensions et produit
-`dist/windows/OTM-Setup-0.2.4.exe`, puis ouvre son assistant d’installation.
+`dist/windows/OTM-Setup-0.2.5.exe`, puis ouvre son assistant d’installation.
 Ajouter `-BuildOnly` pour produire le setup sans l’installer, ou `-IsccPath ...` pour
 indiquer le compilateur Inno Setup. Les utilisateurs finaux exécutent seulement le setup :
 ni Rust, ni Python, ni terminal ne sont requis.
@@ -89,11 +89,13 @@ demandes sont présentées successivement. Les en-têtes du navigateur sont cons
 pour le lien d’origine et retirés si l’utilisateur modifie son adresse.
 Les commandes CLI explicites `otm add` et les reprises existantes gardent leur fonctionnement.
 
-### Enrichissement automatique de High Audio
+### Pochette et paroles des MP3 (option, désactivée par défaut)
 
-Le MP3 **High (320 kb/s)** recherche automatiquement les paroles avec LRCLIB,
-puis la pochette avec MusicBrainz / Cover Art Archive. Aucun compte ni clé API
-n'est nécessaire. Titre, artiste et durée sont comparés avant d'accepter les paroles.
+Réglages → Vidéo & audio → **Add cover art and lyrics to MP3 files**. Une fois activée,
+l'option s'applique à tout MP3 individuel, quelle que soit sa qualité (High, Standard ou
+Small) : l'application cherche les paroles avec LRCLIB, puis la pochette avec
+MusicBrainz / Cover Art Archive. Tant qu'elle reste désactivée, aucun de ces services
+n'est contacté. Aucun compte ni clé API n'est nécessaire. Titre, artiste et durée sont comparés avant d'accepter les paroles.
 L'image de la source sert de repli lorsque la pochette d'album est indisponible.
 Les requêtes utilisent des délais limités et respectent le débit MusicBrainz.
 
@@ -101,8 +103,9 @@ Les tags ID3 `USLT` (paroles) et `APIC` (image) sont intégrés dans une copie v
 avant remplacement. Une recherche manquante ou une panne de service ne bloque pas
 le MP3 : le résultat de l'enrichissement apparaît dans sa ligne. La couleur dorée
 indique que les deux éléments ont été intégrés. Aucun popup de détection ni format
-Gold distinct. Standard, Small, Original et vidéo ne déclenchent aucune recherche.
-L'enrichissement concerne les morceaux individuels, pas les playlists.
+Gold distinct. L'audio original (sans conversion) et la vidéo ne déclenchent aucune recherche.
+L'enrichissement concerne les morceaux individuels, pas les playlists. Les paroles restent
+la propriété de leurs auteurs : l'option est réservée à un usage personnel.
 La conversion 320 kb/s n'améliore pas la qualité de la source.
 
 Services : https://lrclib.net/docs et https://musicbrainz.org/doc/Cover_Art_Archive/API.

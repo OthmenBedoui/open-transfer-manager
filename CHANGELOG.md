@@ -1,5 +1,12 @@
 # Historique
 
+## 0.2.5 — pochette et paroles en option
+
+- Nouveau réglage « Add cover art and lyrics to MP3 files » (Réglages → Vidéo & audio), désactivé par défaut.
+- Désactivé : aucune requête vers LRCLIB, MusicBrainz ou Cover Art Archive.
+- Activé : fonctionne pour toutes les qualités MP3 (High, Standard, Small), plus seulement 320 kb/s.
+- L'API locale indique l'état réel du réglage (`capabilities.music_enrichment`).
+
 ## 0.2.4 — enrichissement automatique High Audio
 
 - Recherche LRCLIB et pochette MusicBrainz / Cover Art Archive uniquement pour le MP3 High 320 kb/s individuel.

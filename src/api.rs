@@ -196,7 +196,7 @@ fn handle(mut req: tiny_http::Request, mgr: &Manager, token: &str) {
         return respond(
             req,
             200,
-            json!({"app": "otm", "version": env!("CARGO_PKG_VERSION"), "capabilities": {"download_confirmation": mgr.has_confirmation_ui(), "music_enrichment": true}}),
+            json!({"app": "otm", "version": env!("CARGO_PKG_VERSION"), "capabilities": {"download_confirmation": mgr.has_confirmation_ui(), "music_enrichment": mgr.settings().music_tags}}),
         );
     }
     if !constant_eq(&header("X-OTM-Token"), token) {
