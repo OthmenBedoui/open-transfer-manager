@@ -17,23 +17,27 @@
 
 ## Install
 
-All files are on the [Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases) page.
-For videos and MP3, OTM also needs **ffmpeg** and **yt-dlp**: each section below shows how to get them.
+One command per system. Each one installs the app **and everything it needs** —
+yt-dlp (videos, MP3), ffmpeg (MP3, best quality) and rclone (Send, Transfer) — and checks
+every download against its official SHA-256. All features are the same on Windows, Linux
+and macOS. Every change is tested by a real install on all three systems
+([CI](https://github.com/OthmenBedoui/open-transfer-manager/actions)).
 
 ### Windows 10 / 11
 
-1. Download `OTM-Setup-x.y.z.exe` and run it. No administrator rights needed.
-2. Open **Open Transfer Manager** from the Start menu.
-3. Videos and MP3 — in a terminal:
+Open **PowerShell** (Start menu → type `PowerShell`) and paste:
 
 ```powershell
-winget install yt-dlp.yt-dlp
-winget install Gyan.FFmpeg
+irm https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.ps1 | iex
 ```
 
-Then close and reopen OTM so it finds them.
+No administrator rights needed. Then open **Open Transfer Manager** from the Start menu.
+You can also download `OTM-Setup-x.y.z.exe` from
+[Releases](https://github.com/OthmenBedoui/open-transfer-manager/releases) and run it: it
+installs the same tools (the "Download yt-dlp, ffmpeg and rclone" box is ticked).
+Uninstall: Windows Settings → Apps → Open Transfer Manager (your downloads are kept).
 
-### Linux and macOS — one command
+### Linux and macOS
 
 Open a terminal and paste:
 
@@ -41,15 +45,24 @@ Open a terminal and paste:
 curl -fsSL https://raw.githubusercontent.com/OthmenBedoui/open-transfer-manager/main/install.sh | bash
 ```
 
-It downloads the app (and checks its SHA-256), adds it to your applications menu
-(Linux) or `~/Applications` (macOS), offers to install ffmpeg, sets up yt-dlp and
-connects your browsers. No `sudo` for the app itself. Then open
-**Open Transfer Manager** from your menu, or type `otm`.
+It installs the app for your user (`~/.local/bin/otm`, plus a menu entry on Linux or
+`~/Applications` on macOS), connects your browsers, and installs yt-dlp, rclone and ffmpeg.
+It asks before using `sudo` once, to install ffmpeg and `secret-tool` (keeps upload
+passwords in your keyring) with your package manager; macOS uses Homebrew for ffmpeg.
+Then open **Open Transfer Manager** from your menu, or type `otm`.
 
 Works on **Ubuntu** 22.04+, **Linux Mint** 21+, **Pop!_OS**, **Zorin**, **elementary OS**,
 **Debian** 12+, **Fedora**, **Arch**, **Manjaro**, **EndeavourOS**, **openSUSE** Tumbleweed,
 and **macOS** on Apple Silicon (M1–M4). On other systems (Intel Mac, ARM, older
 distributions) the installer offers to build the app from source.
+
+Check that everything is there, on any system:
+
+```bash
+otm doctor
+```
+
+Reinstall or update the helper programs at any time: `otm install-tools`.
 
 Uninstall (keeps your files and settings; add `--purge` to remove settings too):
 
@@ -71,19 +84,16 @@ sudo mv otm /usr/local/bin/
 otm                                     # start the app
 ```
 
-2. macOS: get videos and MP3 with [Homebrew](https://brew.sh): `brew install yt-dlp ffmpeg`.
-3. Linux: get ffmpeg for your distribution, and the latest yt-dlp:
+2. Install the helper programs: `otm install-tools` (yt-dlp, rclone, and ffmpeg on
+   Linux; on macOS install ffmpeg with [Homebrew](https://brew.sh): `brew install ffmpeg`).
+3. Optional, Linux: your distribution's ffmpeg and `secret-tool`:
 
-| Distribution | ffmpeg | yt-dlp |
-|---|---|---|
-| **Ubuntu** 22.04+, **Linux Mint** 21+, **Pop!_OS**, **Zorin**, **elementary OS** | `sudo apt install ffmpeg` | `otm update-ytdlp` |
-| **Debian** 12+ | `sudo apt install ffmpeg` | `otm update-ytdlp` |
-| **Fedora** | `sudo dnf install ffmpeg-free` | `otm update-ytdlp` |
-| **Arch**, **Manjaro**, **EndeavourOS** | `sudo pacman -S ffmpeg` | `otm update-ytdlp` |
-| **openSUSE** Tumbleweed | `sudo zypper install ffmpeg` | `otm update-ytdlp` |
-
-`otm update-ytdlp` downloads the official yt-dlp for OTM. It is better than the
-distribution package, which is often too old for YouTube.
+| Distribution | Command |
+|---|---|
+| **Ubuntu**, **Linux Mint**, **Pop!_OS**, **Zorin**, **elementary OS**, **Debian** | `sudo apt install ffmpeg libsecret-tools` |
+| **Fedora** | `sudo dnf install ffmpeg-free libsecret` |
+| **Arch**, **Manjaro**, **EndeavourOS** | `sudo pacman -S ffmpeg libsecret` |
+| **openSUSE** Tumbleweed | `sudo zypper install ffmpeg` |
 
 The ready-made Linux file needs a 64-bit PC with glibc 2.35 or newer. Older distributions
 (Ubuntu 20.04, Debian 11, RHEL / Rocky / Alma 8–9, openSUSE Leap 15), Alpine and ARM

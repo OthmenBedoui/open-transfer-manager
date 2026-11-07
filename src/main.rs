@@ -13,6 +13,7 @@ mod native_host;
 mod paths;
 mod rclone;
 mod secrets;
+mod tools;
 mod ui;
 mod uploads;
 
@@ -31,6 +32,8 @@ USAGE
   otm headless                run without a window (server / NAS)
   otm doctor                  diagnostics for bug reports
   otm register-browsers [--force] | unregister-browsers
+  otm install-tools [--no-ffmpeg]
+                              install or update yt-dlp, rclone and ffmpeg (all features)
   otm update-ytdlp            install or update the video engine
   otm update-rclone           install or update the upload engine
   otm connectors              list your upload destinations (set them up in the app)
@@ -108,6 +111,22 @@ fn main() {
                 1
             }
         },
+        Some("install-tools") => {
+            let reports = tools::install_all(!args.iter().any(|a| a == "--no-ffmpeg"), |step| {
+                println!("==> {step}");
+            });
+            let mut failed = false;
+            for r in reports {
+                match r.result {
+                    Ok(t) => println!("  ok  {:<7} {t}", r.tool),
+                    Err(e) => {
+                        failed = true;
+                        println!("  !!  {:<7} {e}", r.tool);
+                    }
+                }
+            }
+            i32::from(failed)
+        }
         Some("connectors") => cmd_connectors(),
         Some("send") => cmd_send(&args[1..]),
         Some("update-ytdlp") => match media::install_or_update() {

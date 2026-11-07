@@ -1,6 +1,12 @@
 # Historique
 
-## Non publié — envoi de fichiers (phase A)
+## 0.3.0 — envoyer partout, transférer entre disques
+
+- Installation en une commande avec tous les outils : `install.ps1` (Windows) et `install.sh`
+  (Linux, macOS) installent yt-dlp, rclone et ffmpeg, chacun vérifié par sa somme SHA-256 officielle
+  (`otm install-tools`). Sous Linux, secret-tool est proposé pour garder les mots de passe dans le trousseau.
+- Tests d'installation réels sur Windows, Linux et macOS en CI, avec envois et transferts réels
+  et captures d'écran de l'application sous Linux.
 
 - Nouvelle section **Send** : glisser-déposer des fichiers ou dossiers (n'importe où dans la fenêtre),
   choisir plusieurs destinations, envoi en parallèle avec progression, arrêt, nouvel essai,

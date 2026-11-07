@@ -13,8 +13,9 @@
 #   --purge          with --uninstall: also delete settings and download list
 #
 # Installs for the current user only (no sudo): ~/.local/bin/otm, plus a menu entry
-# (Linux) or ~/Applications/Open Transfer Manager.app (macOS). sudo is only used to
-# install ffmpeg with your package manager, and only if you agree.
+# (Linux) or ~/Applications/Open Transfer Manager.app (macOS), then yt-dlp, rclone and
+# ffmpeg (each checked against its official checksum). sudo is only used to install
+# ffmpeg / secret-tool with your package manager, and only if you agree.
 #
 # Testing hook: OTM_BINARY=/path/to/otm installs that file instead of downloading.
 
@@ -236,32 +237,48 @@ EOF
   ok "App: $MACAPP"
 fi
 
-# ------------------------------------------------------------------ ffmpeg (videos and MP3)
-if [ "$FFMPEG" = 1 ] && ! command -v ffmpeg >/dev/null 2>&1; then
-  step "ffmpeg (needed for MP3 and the best video quality)"
-  cmd=""
-  if [ "$OS" = Darwin ]; then
-    command -v brew >/dev/null 2>&1 && cmd="brew install ffmpeg"
-  elif command -v apt-get >/dev/null 2>&1; then cmd="sudo apt-get install -y ffmpeg"
-  elif command -v dnf >/dev/null 2>&1; then cmd="sudo dnf install -y ffmpeg-free"
-  elif command -v pacman >/dev/null 2>&1; then cmd="sudo pacman -S --needed --noconfirm ffmpeg"
-  elif command -v zypper >/dev/null 2>&1; then cmd="sudo zypper --non-interactive install ffmpeg"
-  fi
-  if [ -z "$cmd" ]; then
-    warn "Install ffmpeg with your package manager (or Homebrew on macOS), then restart OTM."
-  elif ask "Install ffmpeg now with: $cmd ?"; then
-    sh -c "$cmd" || warn "ffmpeg was not installed; you can install it later."
+# ------------------------------------------------------------------ system packages
+# ffmpeg (MP3, best video quality) and, on Linux, secret-tool (keeps upload passwords in
+# the desktop keyring). Both come from your package manager, only if you agree; without
+# them OTM still works: install-tools below fetches a checked static ffmpeg on Linux, and
+# passwords then go to a private file.
+pkgs=()
+if [ "$FFMPEG" = 1 ] && ! command -v ffmpeg >/dev/null 2>&1; then pkgs+=(ffmpeg); fi
+need_secret=0
+if [ "$OS" = Linux ] && ! command -v secret-tool >/dev/null 2>&1; then need_secret=1; fi
+cmd=""
+if [ "$OS" = Darwin ]; then
+  if [ "${#pkgs[@]}" -gt 0 ] && command -v brew >/dev/null 2>&1; then cmd="brew install ffmpeg"; fi
+elif command -v apt-get >/dev/null 2>&1; then
+  if [ "$need_secret" = 1 ]; then pkgs+=(libsecret-tools); fi
+  if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo apt-get install -y ${pkgs[*]}"; fi
+elif command -v dnf >/dev/null 2>&1; then
+  if [ "${#pkgs[@]}" -gt 0 ]; then pkgs=(ffmpeg-free); fi
+  if [ "$need_secret" = 1 ]; then pkgs+=(libsecret); fi
+  if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo dnf install -y ${pkgs[*]}"; fi
+elif command -v pacman >/dev/null 2>&1; then
+  if [ "$need_secret" = 1 ]; then pkgs+=(libsecret); fi
+  if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo pacman -S --needed --noconfirm ${pkgs[*]}"; fi
+elif command -v zypper >/dev/null 2>&1; then
+  if [ "${#pkgs[@]}" -gt 0 ]; then cmd="sudo zypper --non-interactive install ${pkgs[*]}"; fi
+fi
+if [ -n "$cmd" ]; then
+  step "System packages ($cmd)"
+  if ask "Install them now?"; then
+    sh -c "$cmd" || warn "Not installed; OTM uses its own copies where it can."
   else
-    warn "Skipped. Install it later with: $cmd"
+    warn "Skipped. Install later with: $cmd"
   fi
 fi
 
-# ------------------------------------------------------------------ yt-dlp and browsers
-step "Video engine (yt-dlp)"
-if "$BIN" update-ytdlp >/dev/null 2>&1; then
-  ok "yt-dlp ready"
+# ------------------------------------------------------------------ yt-dlp, rclone, ffmpeg
+step "Helper programs: yt-dlp (videos, MP3), rclone (Send, Transfer), ffmpeg"
+tool_arg="--with-ffmpeg"
+if [ "$FFMPEG" = 0 ]; then tool_arg="--no-ffmpeg"; fi
+if "$BIN" install-tools "$tool_arg" | sed 's/^/  /'; then
+  ok "All helper programs are ready"
 else
-  warn "yt-dlp not installed now; run later: otm update-ytdlp"
+  warn "Some helper programs are missing; run later: otm install-tools"
 fi
 
 if [ "$BROWSERS" = 1 ]; then

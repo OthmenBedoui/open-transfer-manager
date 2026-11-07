@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.7"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef AppIdentity
   #define AppIdentity "{{F390B4CB-96AC-4D1E-9302-4CC6F06443BB}"
@@ -40,6 +40,7 @@ AppMutex=OpenTransferManagerSetup
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 [Tasks]
+Name: "tools"; Description: "Download yt-dlp, ffmpeg and rclone (videos, MP3, Send and Transfer; about 200 MB, checked against official checksums)"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
 Source: "{#Root}\target\release\otm.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -60,6 +61,7 @@ Name: "{group}\Installer extension Chrome"; Filename: "{app}\otm.exe"; Parameter
 Name: "{group}\Desinstaller Open Transfer Manager"; Filename: "{app}\Desinstaller OTM.exe"; IconFilename: "{app}\otm.ico"
 Name: "{autodesktop}\Open Transfer Manager"; Filename: "{app}\otm.exe"; IconFilename: "{app}\otm.ico"; Tasks: desktopicon
 [Run]
+Filename: "{app}\otm.exe"; Parameters: "install-tools"; StatusMsg: "Installing yt-dlp, ffmpeg and rclone..."; Tasks: tools; Flags: runhidden waituntilterminated runasoriginaluser
 Filename: "{app}\otm.exe"; Parameters: "register-browsers --force"; Flags: runhidden waituntilterminated
 #ifdef ChromeStoreId
 Filename: "{app}\otm.exe"; Parameters: "register-browsers --machine"; Flags: runhidden waituntilterminated

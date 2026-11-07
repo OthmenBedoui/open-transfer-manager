@@ -1,6 +1,8 @@
 name: Rust desktop
 on: [push, pull_request]
 jobs:
+  # Windows: checks, the setup, then the real one-command install (install.ps1) with
+  # yt-dlp, ffmpeg and rclone, live uploads and transfers, and the uninstaller.
   windows:
     runs-on: windows-latest
     steps:
@@ -15,12 +17,36 @@ jobs:
       - run: choco install innosetup --yes --no-progress
       - run: ./scripts/install-windows.ps1 -BuildOnly
         shell: pwsh
+      - name: One-command install (install.ps1 with the setup just built)
+        shell: powershell
+        run: |
+          $env:OTM_SETUP = (Get-ChildItem dist/windows/OTM-Setup-*.exe | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+          ./install.ps1
+      - name: Every feature is installed
+        shell: bash
+        run: |
+          OTM="$LOCALAPPDATA/Programs/Open Transfer Manager/otm.exe"
+          "$OTM" --version
+          "$OTM" doctor | tee doctor.txt
+          if grep -E '^(yt-dlp|ffmpeg|rclone) ' doctor.txt | grep -qi 'not '; then echo 'A helper program is missing'; exit 1; fi
+      - name: Real uploads and transfers (SFTP, FTP, WebDAV, S3)
+        shell: bash
+        run: |
+          scripts/live-servers.sh "$APPDATA/OpenTransferManager/tools/rclone.exe" "$RUNNER_TEMP/srv" -- \
+            cargo test --locked live_servers -- --ignored --nocapture
+      - name: Uninstall
+        shell: bash
+        run: |
+          "$LOCALAPPDATA/Programs/Open Transfer Manager/unins000.exe" //VERYSILENT //SUPPRESSMSGBOXES
+          sleep 10
+          test ! -e "$LOCALAPPDATA/Programs/Open Transfer Manager/otm.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: OTM-Windows-Setup
           path: dist/windows/OTM-Setup-*.exe
 
-  # Linux and macOS: same checks, plus an optimized binary as artifact.
+  # Linux and macOS: same checks, the real install.sh (system packages, yt-dlp, rclone,
+  # ffmpeg), live uploads and transfers, screenshots of the app, and uninstall.
   unix:
     strategy:
       fail-fast: false
@@ -33,13 +59,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: System libraries (window, keyboard, OpenGL)
+      - name: System libraries (window, keyboard, OpenGL, virtual screen)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
-            libxi-dev libgl1-mesa-dev libegl1-mesa-dev
+            libxi-dev libgl1-mesa-dev libegl1-mesa-dev xvfb libgl1-mesa-dri
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -48,25 +74,50 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo build --release --locked
-      - name: Smoke test
-        run: |
-          ./target/release/otm --version
-          ./target/release/otm doctor
       - name: ShellCheck install.sh
         if: runner.os == 'Linux'
-        run: shellcheck install.sh
-      - name: Installer — install, check, uninstall
+        run: shellcheck install.sh scripts/live-servers.sh
+      - name: One-command install (install.sh with the binary just built)
         env:
           OTM_BINARY: ${{ github.workspace }}/target/release/otm
+        run: bash install.sh --yes
+      - name: Every feature is installed
         run: |
-          bash install.sh --yes --no-ffmpeg
           "$HOME/.local/bin/otm" --version
+          "$HOME/.local/bin/otm" doctor | tee doctor.txt
+          if grep -E '^(yt-dlp|ffmpeg|rclone) ' doctor.txt | grep -qi 'not '; then echo 'A helper program is missing'; exit 1; fi
           if [ "$RUNNER_OS" = Linux ]; then
             test -f "$HOME/.local/share/applications/open-transfer-manager.desktop"
+            command -v secret-tool
           else
             test -x "$HOME/Applications/Open Transfer Manager.app/Contents/MacOS/open-transfer-manager"
-            test -f "$HOME/Applications/Open Transfer Manager.app/Contents/Info.plist"
           fi
+      - name: Real uploads and transfers (SFTP, FTP, WebDAV, S3)
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            TOOLS="$HOME/.local/share/open-transfer-manager/tools"
+          else
+            TOOLS="$HOME/Library/Application Support/Open Transfer Manager/tools"
+          fi
+          R="$TOOLS/rclone"; [ -x "$R" ] || R="$(command -v rclone)"
+          scripts/live-servers.sh "$R" "$RUNNER_TEMP/srv" -- \
+            cargo test --locked live_servers -- --ignored --nocapture
+      - name: Screenshots of the running app (Linux, virtual screen)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p shots
+          for view in all send transfer connectors; do
+            OTM_SHOT_THEME=dark OTM_SHOT_VIEW=$view xvfb-run -a -s "-screen 0 1280x800x24" \
+              ./target/release/otm --screenshot "shots/$view.png"
+            test -s "shots/$view.png"
+          done
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: linux-screenshots
+          path: shots/
+      - name: Uninstall
+        run: |
           bash install.sh --uninstall --purge
           test ! -e "$HOME/.local/bin/otm"
           if [ "$RUNNER_OS" = Linux ]; then
