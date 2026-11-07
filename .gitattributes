@@ -10,3 +10,4 @@
 *.iss text eol=crlf
 *.png binary
 *.ttf binary
+*.webp binary
