@@ -1,5 +1,19 @@
 # Historique
 
+## Non publié — envoi de fichiers (phase A)
+
+- Nouvelle section **Send** : glisser-déposer des fichiers ou dossiers (n'importe où dans la fenêtre),
+  choisir plusieurs destinations, envoi en parallèle avec progression, arrêt, nouvel essai,
+  liens de partage (S3 pré-signés 7 jours, Nextcloud…).
+- Nouvelle section **Connectors** : SFTP (agent SSH, fichier de clé ou mot de passe), FTP/FTPS,
+  WebDAV (Nextcloud, ownCloud) et stockage compatible S3 ; bouton « Test connection ».
+- « Send to… » dans le menu d'un téléchargement terminé.
+- Moteur d'envoi : rclone, installé par OTM depuis downloads.rclone.org avec vérification SHA-256
+  (`otm update-rclone`). La configuration rclone personnelle de l'utilisateur n'est jamais lue.
+- Mots de passe et clés dans le Gestionnaire d'identification Windows, le Trousseau macOS ou
+  le Secret Service Linux (`secret-tool`) ; sinon un fichier privé (0600), indiqué dans l'interface.
+- Ligne de commande : `otm connectors`, `otm send FICHIER... --to NOM[,NOM] [--link]`.
+
 ## 0.2.7 — ouvrir le fichier et son dossier
 
 - « Show in folder » ouvre enfin le bon dossier sous Windows et sélectionne le fichier

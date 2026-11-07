@@ -3,6 +3,7 @@
 
 mod api;
 mod browsers;
+mod connectors;
 mod http;
 mod manager;
 mod media;
@@ -10,7 +11,10 @@ mod model;
 mod music;
 mod native_host;
 mod paths;
+mod rclone;
+mod secrets;
 mod ui;
+mod uploads;
 
 use manager::Manager;
 use serde_json::json;
@@ -28,6 +32,10 @@ USAGE
   otm doctor                  diagnostics for bug reports
   otm register-browsers [--force] | unregister-browsers
   otm update-ytdlp            install or update the video engine
+  otm update-rclone           install or update the upload engine
+  otm connectors              list your upload destinations (set them up in the app)
+  otm send FILE... --to NAME[,NAME...] [--link]
+                              upload files to one or more destinations
   otm --version";
 
 fn main() {
@@ -90,6 +98,18 @@ fn main() {
             }
             0
         }
+        Some("update-rclone") => match rclone::install_or_update() {
+            Ok(t) => {
+                println!("{t}");
+                0
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        },
+        Some("connectors") => cmd_connectors(),
+        Some("send") => cmd_send(&args[1..]),
         Some("update-ytdlp") => match media::install_or_update() {
             Ok(t) => {
                 println!("{t}");
@@ -245,6 +265,105 @@ fn cmd_formats(args: &[String]) -> i32 {
     }
 }
 
+fn cmd_connectors() -> i32 {
+    let up = uploads::Uploads::new(true);
+    let all = up.connectors();
+    if all.is_empty() {
+        println!("No destinations yet. Add one in the app: Connectors.");
+    }
+    for c in all {
+        println!(
+            "  {:<24} {:<14} {}",
+            c.display_name(),
+            c.kind.label(),
+            c.address()
+        );
+    }
+    0
+}
+
+fn cmd_send(args: &[String]) -> i32 {
+    let usage = "usage: otm send FILE... --to NAME[,NAME...] [--link]";
+    let to = args
+        .iter()
+        .position(|a| a == "--to")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let files: Vec<std::path::PathBuf> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--to"))
+        .map(|(_, a)| std::path::PathBuf::from(a))
+        .collect();
+    let (Some(to), false) = (to, files.is_empty()) else {
+        eprintln!("{usage}");
+        return 2;
+    };
+    for f in &files {
+        if !f.exists() {
+            eprintln!("error: not found: {}", f.display());
+            return 1;
+        }
+    }
+    let up = uploads::Uploads::new(true);
+    let mut dests = Vec::new();
+    for name in to.split(',').filter(|n| !n.trim().is_empty()) {
+        match up.find_connector(name) {
+            Some(c) => dests.push(c.id),
+            None => {
+                eprintln!(
+                    "error: no destination named \"{}\" (see: otm connectors)",
+                    name.trim()
+                );
+                return 1;
+            }
+        }
+    }
+    if !uploads::engine_ready() {
+        eprintln!("The upload engine is missing: run  otm update-rclone");
+        return 1;
+    }
+    let files: Vec<_> = files
+        .iter()
+        .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
+        .collect();
+    up.send(&files, &dests, args.iter().any(|a| a == "--link"));
+    let mut shown = std::collections::HashMap::new();
+    loop {
+        up.tick();
+        for j in up.jobs() {
+            let line = match j.status {
+                uploads::JobStatus::Running => format!(
+                    "{:>5.1}%  {}",
+                    j.progress() * 100.0,
+                    model::fmt_rate(Some(j.speed))
+                ),
+                uploads::JobStatus::Done => match &j.link {
+                    Some(l) => format!("done   {l}"),
+                    None => "done".into(),
+                },
+                uploads::JobStatus::Failed => format!("failed: {}", j.error),
+                uploads::JobStatus::Stopped => "stopped".into(),
+                uploads::JobStatus::Waiting => "waiting".into(),
+            };
+            if shown.get(&j.id) != Some(&line) {
+                println!("{} → {}  {line}", j.name, j.dest_name);
+                shown.insert(j.id, line);
+            }
+        }
+        if up.active_count() == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1000));
+    }
+    let failed = up
+        .jobs()
+        .iter()
+        .filter(|j| j.status != uploads::JobStatus::Done)
+        .count();
+    if failed > 0 { 1 } else { 0 }
+}
+
 fn cmd_list() -> i32 {
     match api::request("GET", "/api/downloads", None, Duration::from_secs(5)) {
         Ok(v) => {
@@ -317,6 +436,13 @@ pub fn doctor() -> String {
             .map(|p| p.display().to_string())
             .unwrap_or("not found (needed for MP3 and best quality)".into()),
     );
+    row(
+        "rclone",
+        rclone::version()
+            .map(|v| format!("{v} ({})", rclone::path().unwrap().display()))
+            .unwrap_or("not installed (otm update-rclone)".into()),
+    );
+    row("Secrets stored in", secrets::backend().into());
     row("Data folder", paths::data_dir().display().to_string());
     row(
         "Downloads folder",

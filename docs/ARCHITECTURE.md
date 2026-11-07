@@ -4,6 +4,9 @@
 egui desktop ───────────────┐
 CLI ───── API loopback ─────┼── Manager ── HTTP workers ── fichiers partiels
 extension ─ native host ───┘           └─ yt-dlp / ffmpeg (optionnels)
+
+Send / Connectors ── Uploads ── un processus rclone par fichier × destination
+                        └─ connectors.json + secrets (trousseau du système)
 ```
 
 `Manager` partage les téléchargements via `Arc<Mutex<Download>>`. Chaque téléchargement
@@ -44,3 +47,21 @@ enregistre seulement le résultat (affichage doré). L’option exige ffmpeg. `m
 pochette, limite sa taille et ses dimensions, puis écrit les métadonnées sur une copie
 du MP3 avant remplacement. Le navigateur traite le clic sur cette option comme une
 confirmation ; les autres demandes passent toujours par le dialogue existant.
+
+## Envoi (phase A)
+
+`uploads::Uploads` est indépendant de `Manager` : liste des connecteurs (`connectors.json`)
+et file d'envoi (`Job` = un fichier vers une destination, 3 à la fois, en mémoire seulement).
+`rclone.rs` lance rclone avec un remote `otm` défini uniquement par des variables
+d'environnement `RCLONE_CONFIG_OTM_*` et un `RCLONE_CONFIG` vide propre à OTM : aucun secret
+sur la ligne de commande, la configuration rclone de l'utilisateur n'est pas touchée.
+Les mots de passe sont « obscurcis » par `rclone obscure -` (lu sur stdin) juste avant
+l'envoi ; la clé secrète S3 est transmise telle quelle, comme rclone l'attend.
+La progression vient du journal JSON (`--use-json-log --stats 1s`).
+
+`secrets.rs` : Windows Credential Manager et Trousseau macOS via la crate `keyring`,
+Secret Service sous Linux via `secret-tool` (pas de D-Bus lié au binaire). Sans service
+disponible, repli sur `secrets.json` en mode 0600, signalé dans l'interface (`secrets::backend`).
+
+Tests réels : `cargo test live_servers -- --ignored` contre `rclone serve sftp|ftp|webdav|s3`
+(voir le test pour les ports), `OTM_TEST_KEYCHAIN=1 cargo test keychain -- --ignored`.

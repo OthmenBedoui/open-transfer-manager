@@ -29,3 +29,11 @@ tiny_http = "0.12.0"
 ureq = "3.5.1"
 unicode-bidi = "0.3.18"
 id3 = "1.17.2"
+zip = { version = "9.4.1", default-features = false, features = ["deflate"] }
+sha2 = "0.11.1"
+
+[target."cfg(windows)".dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }

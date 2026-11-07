@@ -1,8 +1,10 @@
 //! Desktop interface (egui).
 
 pub mod app;
+pub mod connect;
 pub mod dialogs;
 pub mod icons;
+pub mod send;
 pub mod text;
 pub mod theme;
 pub mod widgets;

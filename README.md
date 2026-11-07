@@ -10,6 +10,7 @@
 
 - **Fast downloads** — several connections per file, pause and resume.
 - **Video and MP3** — from YouTube and 1000+ sites, choose the quality or MP3 (320 / 192 / 128 kbps).
+- **Send anywhere** — drop files and upload them to several SFTP, FTP, WebDAV (Nextcloud) or S3 servers at once.
 - **Browser extension** — Chrome, Edge, Brave and Firefox: send downloads to the app, Download button on videos.
 - **Organized** — files sorted by type (Video, Music, Documents…), queue, scheduler and speed limit.
 - **Light and dark themes** — one small native app, no account, no ads, no tracking.
@@ -101,8 +102,17 @@ Command line:
 ```bash
 otm add https://example.com/file.zip           # download a file
 otm add https://youtu.be/VIDEO_ID --mp3 192    # video to MP3
+otm send build.zip --to prod-server,backup-s3  # upload to saved destinations
 otm doctor                                     # check that everything is set up
 ```
+
+### Send files
+
+Open **Connectors**, add a server (SFTP, FTP/FTPS, WebDAV or S3-compatible) and click
+**Test connection**. Then drop files on **Send**, tick one or more destinations and click
+**Send**. Uploads run through [rclone](https://rclone.org); OTM installs it for you the
+first time (checked against its published SHA-256). Passwords and keys stay in Windows
+Credential Manager, the macOS Keychain or the Linux Secret Service.
 
 ## Browser extension
 

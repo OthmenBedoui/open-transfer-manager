@@ -1,12 +1,15 @@
 //! Main window: sidebar, toolbar, download list, details panel and status bar.
 
+use super::connect::ConnectState;
 use super::dialogs::{AddDialog, DeleteDialog, SettingsDialog};
 use super::icons::{self, Icon};
+use super::send::SendState;
 use super::theme::{self, Palette};
 use super::widgets;
 use crate::api::ApiServer;
 use crate::manager::{DlRef, Event, Manager, lock};
 use crate::model::*;
+use crate::uploads::{UploadEvent, Uploads};
 use crate::{media, paths};
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use std::sync::Arc;
@@ -20,6 +23,8 @@ pub enum View {
     Done,
     Failed,
     Category(String),
+    Send,
+    Connectors,
 }
 
 impl View {
@@ -31,6 +36,8 @@ impl View {
             View::Done => "Completed".into(),
             View::Failed => "Failed".into(),
             View::Category(c) => c.clone(),
+            View::Send => "Send".into(),
+            View::Connectors => "Connectors".into(),
         }
     }
     fn accepts(&self, d: &Download) -> bool {
@@ -41,6 +48,7 @@ impl View {
             View::Done => d.status == Status::Complete,
             View::Failed => d.status == Status::Error,
             View::Category(c) => &d.category == c,
+            View::Send | View::Connectors => false,
         }
     }
 }
@@ -48,7 +56,10 @@ impl View {
 pub struct OtmApp {
     pub mgr: Manager,
     api: Option<ApiServer>,
-    view: View,
+    pub(super) view: View,
+    pub(super) uploads: Uploads,
+    pub(super) send: SendState,
+    pub(super) connect: ConnectState,
     search: String,
     selected: Option<u64>,
     logo: Option<egui::TextureHandle>,
@@ -109,6 +120,9 @@ pub fn run(
             theme::install_fonts(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             mgr2.set_repaint(move || ctx.request_repaint());
+            let uploads = Uploads::new(persist);
+            let ctx = cc.egui_ctx.clone();
+            uploads.set_repaint(move || ctx.request_repaint());
             let logo = image::load_from_memory(include_bytes!("../../assets/otm-64.png"))
                 .ok()
                 .map(|img| {
@@ -120,6 +134,10 @@ pub fn run(
                     cc.egui_ctx
                         .load_texture("logo", ci, egui::TextureOptions::LINEAR)
                 });
+            if screenshot.is_some() {
+                uploads.freeze();
+                uploads.demo();
+            }
             let mut dialog_add = None;
             let mut dialog_settings = setup_browsers.then(|| SettingsDialog::new(&mgr2, 5));
             if screenshot.is_some() {
@@ -150,10 +168,32 @@ pub fn run(
                 cc.egui_ctx
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
+            let first_view = match std::env::var("OTM_SHOT_VIEW").as_deref() {
+                Ok("send") if screenshot.is_some() => View::Send,
+                Ok("connectors") if screenshot.is_some() => View::Connectors,
+                _ => View::All,
+            };
+            let mut send = SendState::default();
+            let mut connect = ConnectState::default();
+            if first_view == View::Send {
+                send.chosen = [1, 2].into_iter().collect();
+                send.links = true;
+                send.add(
+                    [std::env::current_exe().unwrap_or_default()]
+                        .into_iter()
+                        .chain(std::env::var_os("OTM_SHOT_FILES").map(std::path::PathBuf::from)),
+                );
+            }
+            if first_view == View::Connectors {
+                connect.editor = uploads.connector(1).map(super::connect::Editor::for_demo);
+            }
             Ok(Box::new(OtmApp {
                 mgr: mgr2.clone(),
                 api,
-                view: View::All,
+                view: first_view,
+                uploads,
+                send,
+                connect,
                 search: String::new(),
                 selected: None,
                 logo,
@@ -209,6 +249,33 @@ impl OtmApp {
 
     fn handle_events(&mut self, ctx: &egui::Context) {
         let notify = self.mgr.settings().notify_on_complete;
+        for e in self.uploads.take_events() {
+            match e {
+                UploadEvent::Done { name, dest } => {
+                    self.toast(format!("Sent: {name} → {dest}"));
+                    if notify {
+                        paths::notify("Upload complete", &format!("{name} → {dest}"));
+                    }
+                }
+                UploadEvent::Failed { name, dest, error } => {
+                    self.toast(format!("{name} → {dest}: {error}"));
+                }
+            }
+        }
+        // files dropped anywhere on the window go to the Send page
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            self.send.add(dropped);
+            self.view = View::Send;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         for e in self.mgr.take_events() {
             match e {
                 Event::Finished { name, path } => {
@@ -348,6 +415,12 @@ impl OtmApp {
         for (v, icon, color, n) in items {
             self.nav_item(ui, p, v, icon, color, n);
         }
+        ui.add_space(10.0);
+        section(ui, p, "SEND");
+        let uploading = self.uploads.active_count();
+        let dests = self.uploads.connectors().len();
+        self.nav_item(ui, p, View::Send, Icon::Upload, None, uploading);
+        self.nav_item(ui, p, View::Connectors, Icon::Plug, None, dests);
         ui.add_space(10.0);
         section(ui, p, "CATEGORIES");
         let cats: Vec<String> = self
@@ -857,6 +930,15 @@ impl OtmApp {
                 paths::reveal(if complete { &path } else { &save_dir });
                 ui.close();
             }
+            if complete && ui.button("Send to…").clicked() {
+                if path.exists() {
+                    self.send.add([path.clone()]);
+                    self.view = View::Send;
+                } else {
+                    self_toast(&mut self.toast, "File not found: it was moved or deleted.");
+                }
+                ui.close();
+            }
             ui.separator();
             if !complete && !running && ui.button("Resume").clicked() {
                 self.mgr.start(dl);
@@ -1162,6 +1244,7 @@ impl eframe::App for OtmApp {
         if self.last_tick.elapsed() >= Duration::from_millis(500) && self.screenshot.is_none() {
             self.last_tick = Instant::now();
             self.mgr.tick();
+            self.uploads.tick();
         }
         for u in std::mem::take(&mut self.pending_urls) {
             self.pending_confirmations
@@ -1169,11 +1252,13 @@ impl eframe::App for OtmApp {
         }
         self.handle_events(&ctx);
         self.handle_keys(&ctx);
-        ctx.request_repaint_after(if self.mgr.active_count() > 0 {
-            Duration::from_millis(250)
-        } else {
-            Duration::from_secs(1)
-        });
+        ctx.request_repaint_after(
+            if self.mgr.active_count() + self.uploads.active_count() > 0 {
+                Duration::from_millis(250)
+            } else {
+                Duration::from_secs(1)
+            },
+        );
 
         egui::Panel::left("sidebar")
             .exact_size(236.0)
@@ -1200,6 +1285,17 @@ impl eframe::App for OtmApp {
                 bottom: 10,
             }))
             .show(ui, |ui| {
+                match self.view {
+                    View::Send => {
+                        self.send_view(ui, &p);
+                        return;
+                    }
+                    View::Connectors => {
+                        self.connectors_view(ui, &p);
+                        return;
+                    }
+                    _ => {}
+                }
                 let rows = self.visible();
                 self.header(ui, &p, rows.len());
                 ui.add_space(4.0);
@@ -1275,6 +1371,7 @@ impl eframe::App for OtmApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.uploads.stop_all();
         if let Some(a) = &self.api {
             a.stop();
         }
