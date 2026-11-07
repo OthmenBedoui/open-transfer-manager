@@ -65,6 +65,9 @@ pub struct AddDialog {
     opts: MediaOpts,
     focus_url: bool,
     confirmation: bool,
+    /// Site that sent the browser request, and whether to trust it from now on.
+    trust_site: String,
+    trust: bool,
 
     headers: Vec<(String, String)>,
     probe: Arc<Mutex<(u64, Probe)>>,
@@ -86,6 +89,8 @@ impl AddDialog {
             opts: mgr.settings().media,
             focus_url: true,
             confirmation: false,
+            trust_site: String::new(),
+            trust: false,
 
             headers: vec![],
             probe: Arc::new(Mutex::new((0, Probe::Idle))),
@@ -104,6 +109,7 @@ impl AddDialog {
     pub fn from_request(mgr: &Manager, request: DownloadRequest) -> Self {
         let mut dialog = Self::new(mgr, &request.url);
         dialog.confirmation = true;
+        dialog.trust_site = request.site();
         dialog.headers = request.headers;
         if let Some(media) = request.media {
             dialog.mode = if media { Mode::Media } else { Mode::File };
@@ -342,6 +348,21 @@ impl AddDialog {
                         self.folder_touched = true;
                     }
                 });
+                if self.confirmation && !self.trust_site.is_empty() {
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        &mut self.trust,
+                        format!(
+                            "Toujours autoriser les téléchargements depuis {}",
+                            self.trust_site
+                        ),
+                    );
+                    label_small(
+                        ui,
+                        p,
+                        "Ils démarreront sans cette fenêtre. Modifiable dans Réglages → Browsers.",
+                    );
+                }
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     if widgets::ghost(
@@ -397,6 +418,10 @@ impl AddDialog {
         }
         if let Some(start) = submit {
             let url = self.url.trim().to_string();
+            if self.confirmation && self.trust {
+                let site = self.trust_site.clone();
+                mgr.update_settings(|s| s.trust_site(&site));
+            }
             if url.starts_with("http://") || url.starts_with("https://") {
                 let folder = PathBuf::from(self.folder.trim());
                 match self.mode {
@@ -1352,6 +1377,35 @@ impl SettingsDialog {
         });
         if !self.browser_msg.is_empty() {
             label_small(ui, p, &self.browser_msg);
+        }
+        ui.add_space(14.0);
+        heading(ui, "Sites de confiance");
+        label_small(
+            ui,
+            p,
+            "Les téléchargements envoyés par le navigateur depuis ces sites démarrent sans confirmation. \
+             Tous les autres sites demandent toujours.",
+        );
+        if self.s.trusted_sites.is_empty() {
+            label_small(
+                ui,
+                p,
+                "Aucun site : chaque téléchargement du navigateur demande une confirmation.",
+            );
+        }
+        let mut remove = None;
+        for (i, site) in self.s.trusted_sites.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(site);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::secondary(ui, p, "Retirer", Some(Icon::Trash)).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+        }
+        if let Some(i) = remove {
+            self.s.trusted_sites.remove(i);
         }
         ui.add_space(14.0);
         label_small(

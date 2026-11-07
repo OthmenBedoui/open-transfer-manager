@@ -15,7 +15,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps
 ```
 
 La commande lance les tests, compile en release, prépare les extensions et produit
-`dist/windows/OTM-Setup-0.2.5.exe`, puis ouvre son assistant d’installation.
+`dist/windows/OTM-Setup-0.2.6.exe`, puis ouvre son assistant d’installation.
 Ajouter `-BuildOnly` pour produire le setup sans l’installer, ou `-IsccPath ...` pour
 indiquer le compilateur Inno Setup. Les utilisateurs finaux exécutent seulement le setup :
 ni Rust, ni Python, ni terminal ne sont requis.
@@ -88,6 +88,12 @@ création de téléchargement : Télécharger, Ajouter à la file ou Annuler. Pl
 demandes sont présentées successivement. Les en-têtes du navigateur sont conservés
 pour le lien d’origine et retirés si l’utilisateur modifie son adresse.
 Les commandes CLI explicites `otm add` et les reprises existantes gardent leur fonctionnement.
+
+**Sites de confiance.** La fenêtre de confirmation propose « Toujours autoriser les
+téléchargements depuis ce site ». Les liens envoyés ensuite depuis ce site (et ses
+sous-domaines) démarrent sans confirmation ; tous les autres sites continuent de demander.
+Le site retenu est celui de la page d’origine (Referer), sinon celui du lien. La liste se
+gère dans Réglages → Browsers ; elle est vide par défaut.
 
 ### Pochette et paroles des MP3 (option, désactivée par défaut)
 

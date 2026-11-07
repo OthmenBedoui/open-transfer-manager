@@ -1,5 +1,13 @@
 # Historique
 
+## 0.2.6 — sites de confiance
+
+- Case « Toujours autoriser les téléchargements depuis ce site » dans la confirmation des liens du navigateur.
+- Les sites de confiance (et leurs sous-domaines) démarrent sans confirmation ; les autres demandent toujours.
+- Site déterminé par la page d’origine (Referer), sinon par le lien ; domaines imitant un site de confiance refusés.
+- Liste visible et modifiable dans Réglages → Browsers, vide par défaut.
+- Une instance headless accepte aussi les liens des sites de confiance.
+
 ## 0.2.5 — pochette et paroles en option
 
 - Nouveau réglage « Add cover art and lyrics to MP3 files » (Réglages → Vidéo & audio), désactivé par défaut.

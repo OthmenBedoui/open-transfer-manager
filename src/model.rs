@@ -87,6 +87,16 @@ pub struct DownloadRequest {
 }
 
 impl DownloadRequest {
+    /// The site the request comes from: the page that sent it (Referer), else the link itself.
+    pub fn site(&self) -> String {
+        self.headers
+            .iter()
+            .find(|(k, v)| k.eq_ignore_ascii_case("referer") && !v.is_empty())
+            .map(|(_, v)| host_of(v))
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| host_of(&self.url))
+    }
+
     pub fn from_url(url: String) -> Self {
         Self {
             url,
@@ -479,6 +489,28 @@ pub struct Settings {
     /// Add cover art and lyrics to MP3 files (asks LRCLIB, MusicBrainz and Cover Art Archive).
     /// Off by default: it contacts third-party services, so the user turns it on.
     pub music_tags: bool,
+    /// Sites whose browser downloads start without the confirmation window (subdomains included).
+    pub trusted_sites: Vec<String>,
+}
+
+impl Settings {
+    /// True when downloads sent by the browser from `site` may skip the confirmation.
+    pub fn trusts(&self, site: &str) -> bool {
+        let site = site.trim().trim_start_matches("www.").to_lowercase();
+        !site.is_empty()
+            && self.trusted_sites.iter().any(|t| {
+                let t = t.trim().trim_start_matches("www.").to_lowercase();
+                !t.is_empty() && (site == t || site.ends_with(&format!(".{t}")))
+            })
+    }
+
+    pub fn trust_site(&mut self, site: &str) {
+        let site = site.trim().trim_start_matches("www.").to_lowercase();
+        if !site.is_empty() && !self.trusted_sites.contains(&site) {
+            self.trusted_sites.push(site);
+            self.trusted_sites.sort();
+        }
+    }
 }
 
 impl Default for Settings {
@@ -510,6 +542,7 @@ impl Default for Settings {
             start_minimized: false,
             clipboard_watch: false,
             music_tags: false,
+            trusted_sites: Vec::new(),
         }
     }
 }
@@ -715,6 +748,34 @@ mod tests {
         assert_eq!(file_type("song.MP3"), FileType::Audio);
         assert_eq!(file_type("ubuntu.iso"), FileType::Disk);
         assert_eq!(host_of("https://www.YouTube.com/watch?v=1"), "youtube.com");
+    }
+
+    #[test]
+    fn trusted_sites_match_subdomains_only() {
+        let mut s = Settings::default();
+        assert!(!s.trusts("youtube.com"), "nothing is trusted by default");
+        s.trust_site("www.YouTube.com");
+        assert_eq!(s.trusted_sites, vec!["youtube.com"]);
+        assert!(s.trusts("youtube.com"));
+        assert!(s.trusts("music.youtube.com"));
+        assert!(!s.trusts("evilyoutube.com"));
+        assert!(!s.trusts("youtube.com.evil.net"));
+        assert!(!s.trusts(""));
+        s.trust_site("youtube.com");
+        assert_eq!(s.trusted_sites.len(), 1, "no duplicates");
+        let r = DownloadRequest {
+            headers: vec![("Referer".into(), "https://www.youtube.com/watch?v=1".into())],
+            ..DownloadRequest::from_url("https://cdn.example.net/file.mp4".into())
+        };
+        assert_eq!(
+            r.site(),
+            "youtube.com",
+            "the page that sent the link decides"
+        );
+        assert_eq!(
+            DownloadRequest::from_url("https://dl.example.org/a.zip".into()).site(),
+            "dl.example.org"
+        );
     }
 
     #[test]

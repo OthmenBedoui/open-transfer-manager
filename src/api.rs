@@ -273,30 +273,36 @@ fn route(method: &str, path: &str, body: &Value, mgr: &Manager) -> Result<Value,
             } else {
                 media
             };
+            let mut trusted = false;
             if body["confirm"].as_bool() == Some(true) {
-                if !mgr.has_confirmation_ui() {
-                    return Err((
-                        409,
-                        "This instance is headless; open the desktop app to confirm downloads."
-                            .into(),
-                    ));
-                }
-                mgr.push_event(Event::ConfirmDownload(DownloadRequest {
+                let request = DownloadRequest {
                     url: url.to_string(),
                     filename: s(body, "filename").to_string(),
-                    headers,
+                    headers: headers.clone(),
                     media,
-                    opts,
-                }));
-                mgr.push_event(Event::ShowWindow);
-                return Ok(json!({"ok": true, "pending_confirmation": true}));
+                    opts: opts.clone(),
+                };
+                // sites the user chose to trust skip the confirmation window
+                trusted = mgr.settings().trusts(&request.site());
+                if !trusted {
+                    if !mgr.has_confirmation_ui() {
+                        return Err((
+                            409,
+                            "This instance is headless; open the desktop app to confirm downloads."
+                                .into(),
+                        ));
+                    }
+                    mgr.push_event(Event::ConfirmDownload(request));
+                    mgr.push_event(Event::ShowWindow);
+                    return Ok(json!({"ok": true, "pending_confirmation": true}));
+                }
             }
             let dl = mgr.add_smart(url, s(body, "filename"), media, start, headers, opts);
             if body.get("focus").and_then(Value::as_bool) == Some(true) {
                 mgr.push_event(Event::ShowWindow);
             }
             let sum = Summary::from(&*lock(&dl));
-            Ok(json!({"ok": true, "download": sum}))
+            Ok(json!({"ok": true, "download": sum, "trusted_site": trusted}))
         }
         ("POST", "/api/formats") => {
             let url = s(body, "url");
@@ -362,6 +368,37 @@ mod tests {
             requests[0].headers,
             vec![("Cookie".into(), "test=value".into())]
         );
+    }
+
+    #[test]
+    fn trusted_site_skips_confirmation_other_sites_still_ask() {
+        let dir = std::env::temp_dir().join(format!("otm-trust-{}", std::process::id()));
+        let mgr = Manager::new(false);
+        mgr.update_settings(|s| {
+            s.base_folder = dir.clone();
+            s.categories = crate::model::default_categories(&dir);
+            s.trust_site("example.com");
+        });
+        mgr.enable_confirmation_ui();
+        // link sent from a trusted page: added straight away, not started by the test
+        let body = json!({"url":"https://cdn.example.net/a.zip", "referer":"https://www.example.com/page",
+                          "confirm":true, "start":false});
+        let r = route("POST", "/api/add", &body, &mgr).unwrap();
+        assert_eq!(r["trusted_site"], true);
+        assert!(r.get("download").is_some());
+        assert_eq!(mgr.list().len(), 1);
+        // a page from another site still asks first
+        let other = json!({"url":"https://cdn.example.net/b.zip", "referer":"https://other.org/", "confirm":true});
+        let r = route("POST", "/api/add", &other, &mgr).unwrap();
+        assert_eq!(r["pending_confirmation"], true);
+        assert_eq!(mgr.list().len(), 1);
+        // a look-alike domain is not trusted
+        let fake = json!({"url":"https://cdn.example.net/c.zip", "referer":"https://example.com.evil.net/", "confirm":true});
+        assert_eq!(
+            route("POST", "/api/add", &fake, &mgr).unwrap()["pending_confirmation"],
+            true
+        );
+        assert_eq!(mgr.list().len(), 1);
     }
 
     #[test]
