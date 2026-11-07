@@ -1,0 +1,117 @@
+name: Release
+
+# Push a tag like v0.2.6 (it must match the version in Cargo.toml).
+# The release is created as a DRAFT: review it on GitHub, then click "Publish release".
+# "Run workflow" (manual) builds every file without creating a release, to test the pipeline.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Read version from Cargo.toml
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: choco install innosetup --yes --no-progress
+      - name: Tests, release build, extensions and setup
+        run: ./scripts/install-windows.ps1 -BuildOnly
+        shell: pwsh
+      - name: Collect files (this version only)
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item "dist/windows/OTM-Setup-$env:VERSION.exe" out/ -ErrorAction Stop
+          Copy-Item "dist/extension/otm-chromium-$env:VERSION.zip" out/ -ErrorAction Stop
+          Copy-Item "dist/extension/otm-firefox-$env:VERSION.zip" out/ -ErrorAction Stop
+          Get-ChildItem out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: out/*
+          if-no-files-found: error
+
+  unix:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: older glibc, so the binary also runs on older distributions
+          - os: ubuntu-22.04
+            asset: otm-linux-x86_64
+          - os: macos-latest
+            asset: otm-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries (window, keyboard, OpenGL)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev \
+            libxi-dev libgl1-mesa-dev libegl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Name the binary and smoke test it
+        run: |
+          mkdir -p out
+          cp target/release/otm "out/${{ matrix.asset }}"
+          chmod +x "out/${{ matrix.asset }}"
+          "out/${{ matrix.asset }}" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.asset }}
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, unix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: files
+          merge-multiple: true
+      - name: Checksums
+        working-directory: files
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Open Transfer Manager ${{ needs.version.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          files: files/*
